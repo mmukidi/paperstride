@@ -59,9 +59,18 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const html = process.env.GROQ_API_KEY
-      ? await createHtmlWorksheetWithGroq(input)
-      : injectNickname(createSampleHtmlWorksheet(input, defaultBlueprint(input)), input.childName);
+    let html: string;
+
+    if (process.env.GROQ_API_KEY) {
+      try {
+        html = await createHtmlWorksheetWithGroq(input);
+      } catch (error) {
+        console.warn("AI worksheet generation failed; using quality fallback", error);
+        html = createFallbackHtmlWorksheet(input, defaultBlueprint(input));
+      }
+    } else {
+      html = createFallbackHtmlWorksheet(input, defaultBlueprint(input));
+    }
 
     return new Response(html, {
       headers: {
@@ -125,12 +134,25 @@ async function createHtmlWorksheetWithGroq(input: WorksheetInput): Promise<strin
   }
 
   console.warn("Generated worksheet failed validation", validated.reason);
-  const repairedHtml = await repairWorksheetHtml(input, blueprint, rawHtml, validated.reason);
+  if (shouldUseFallbackForValidation(validated.reason)) {
+    console.warn("Using quality fallback workbook instead of retrying thin AI output");
+    return createFallbackHtmlWorksheet(input, blueprint);
+  }
+
+  let repairedHtml: string;
+
+  try {
+    repairedHtml = await repairWorksheetHtml(input, blueprint, rawHtml, validated.reason);
+  } catch (error) {
+    console.warn("Worksheet repair failed; using quality fallback", error);
+    return createFallbackHtmlWorksheet(input, blueprint);
+  }
+
   const repaired = validateWorksheetHtml(repairedHtml, input, blueprint);
 
   if (!repaired.ok) {
     console.warn("Repaired worksheet failed validation; using quality fallback", repaired.reason);
-    return injectNickname(createSampleHtmlWorksheet(input, blueprint), input.childName);
+    return createFallbackHtmlWorksheet(input, blueprint);
   }
 
   return injectNickname(repaired.html, input.childName);
@@ -511,6 +533,16 @@ Required structure:
 10. Smart Test Strategies & SAT Power Tips.
 
 Do not stop after a small sample. If the response is getting long, reduce decoration first, but keep the full reading passage, all questions, all vocabulary cards, and the full answer sheet.`;
+}
+
+function shouldUseFallbackForValidation(reason: string): boolean {
+  return /too short|too thin|too few|reading passage|vocabulary cards|rigor signal|answer sheet|skill being tested|tip or trick/i.test(
+    reason
+  );
+}
+
+function createFallbackHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
+  return injectNickname(createSampleHtmlWorksheet(input, blueprint), input.childName);
 }
 
 function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlueprint {
