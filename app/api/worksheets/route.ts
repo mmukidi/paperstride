@@ -124,6 +124,7 @@ async function createHtmlWorksheetWithGroq(input: WorksheetInput): Promise<strin
     return injectNickname(validated.html, input.childName);
   }
 
+  console.warn("Generated worksheet failed validation", validated.reason);
   const repairedHtml = await repairWorksheetHtml(input, blueprint, rawHtml, validated.reason);
   const repaired = validateWorksheetHtml(repairedHtml, input, blueprint);
 
@@ -276,40 +277,54 @@ async function groqChat(options: {
   temperature: number;
   responseFormat?: "json_object";
 }): Promise<string> {
-  const response = await fetch(groqEndpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-      temperature: options.temperature,
-      max_tokens: options.maxTokens,
-      ...(options.responseFormat
-        ? {
-            response_format: {
-              type: options.responseFormat
+  let lastError = "";
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(groqEndpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        temperature: options.temperature,
+        max_tokens: options.maxTokens,
+        ...(options.responseFormat
+          ? {
+              response_format: {
+                type: options.responseFormat
+              }
             }
-          }
-        : {}),
-      messages: options.messages
-    })
-  });
+          : {}),
+        messages: options.messages
+      })
+    });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`Groq returned ${response.status}: ${body.slice(0, 240)}`);
+    if (response.status === 429 && attempt === 0) {
+      lastError = await response.text().catch(() => "");
+      const waitMs = retryDelayMs(lastError);
+      console.warn(`Groq rate limited worksheet generation; retrying in ${waitMs}ms`);
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Groq returned ${response.status}: ${body.slice(0, 240)}`);
+    }
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
+
+    if (typeof content !== "string" || !content.trim()) {
+      throw new Error("Groq response did not include worksheet content.");
+    }
+
+    return content;
   }
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-
-  if (typeof content !== "string" || !content.trim()) {
-    throw new Error("Groq response did not include worksheet content.");
-  }
-
-  return content;
+  throw new Error(`Groq rate limit did not clear: ${lastError.slice(0, 240)}`);
 }
 
 function buildHtmlPrompt(input: WorksheetInput, blueprint: LearningBlueprint): string {
@@ -809,6 +824,30 @@ function stripHtml(html: string): string {
 
 function wordCount(text: string): number {
   return text.split(/\s+/).filter((word) => /[A-Za-z0-9]/.test(word)).length;
+}
+
+function retryDelayMs(errorText: string): number {
+  const match = errorText.match(/try again in\s+([0-9.]+)\s*([sm]?)/i);
+
+  if (!match) {
+    return 7000;
+  }
+
+  const amount = Number(match[1]);
+  const unit = match[2]?.toLowerCase();
+  const milliseconds = unit === "m" ? amount * 60_000 : amount * 1000;
+
+  if (!Number.isFinite(milliseconds)) {
+    return 7000;
+  }
+
+  return Math.min(35_000, Math.max(2500, Math.ceil(milliseconds + 750)));
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }
 
 function extractHtmlDocument(content: string): string {
