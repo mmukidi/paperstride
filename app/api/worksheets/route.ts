@@ -195,7 +195,7 @@ async function createWorksheetHtml(
 ): Promise<string> {
   return groqChat({
     temperature: 0.48,
-    maxTokens: 12000,
+    maxTokens: 7000,
     messages: [
       {
         role: "system",
@@ -213,12 +213,12 @@ async function createWorksheetHtml(
 async function repairWorksheetHtml(
   input: WorksheetInput,
   blueprint: LearningBlueprint,
-  html: string,
+  _html: string,
   reason: string
 ): Promise<string> {
   return groqChat({
     temperature: 0.15,
-    maxTokens: 12000,
+    maxTokens: 7000,
     messages: [
       {
         role: "system",
@@ -264,10 +264,7 @@ Required HTML markers for validation:
 - Add data-answer="true" to every answer sheet item.
 - Add data-vocab="true" to every vocabulary word card.
 
-Repair the HTML so it is a complete, rigorous, static printable A4 workbook that satisfies every minimum. Keep or expand the worksheet content, answer sheet, explanations, vocabulary, strategy section, embedded CSS, and lightweight inline SVG visuals. Do not merely fix syntax; fix thin content, missing reading depth, missing answer details, and missing required markers.
-
-Unsafe HTML to repair:
-${html}`
+Generate a fresh replacement HTML workbook from scratch. It must be complete, rigorous, static, printable, and satisfy every minimum. Include the answer sheet, explanations, vocabulary, strategy section, embedded CSS, required data markers, and lightweight inline SVG visuals. Do not merely fix syntax; fix thin content, missing reading depth, missing answer details, and missing required markers.`
       }
     ]
   });
