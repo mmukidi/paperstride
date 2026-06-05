@@ -118,14 +118,14 @@ async function parseInput(request: NextRequest): Promise<WorksheetInput> {
 async function createHtmlWorksheetWithGroq(input: WorksheetInput): Promise<string> {
   const blueprint = await createLearningBlueprint(input);
   const rawHtml = await createWorksheetHtml(input, blueprint);
-  const validated = validateStaticHtml(rawHtml);
+  const validated = validateWorksheetHtml(rawHtml, input, blueprint);
 
   if (validated.ok) {
     return injectNickname(validated.html, input.childName);
   }
 
   const repairedHtml = await repairWorksheetHtml(input, blueprint, rawHtml, validated.reason);
-  const repaired = validateStaticHtml(repairedHtml);
+  const repaired = validateWorksheetHtml(repairedHtml, input, blueprint);
 
   if (!repaired.ok) {
     throw new Error(`Generated HTML failed validation: ${repaired.reason}`);
@@ -154,7 +154,7 @@ Learner details:
 - Age: ${input.age}
 - Interest themes: ${input.interests}
 
-Infer a sensible general curriculum path. Decide the workbook length, question count, subject mix, cognitive skills, motivation strategy, visual plan, and answer expectations.
+Infer a sensible general curriculum path. Decide the workbook length, question count, subject mix, cognitive skills, motivation strategy, visual plan, reading depth, and answer expectations. This must be a substantial workbook, not a short quiz.
 
 Return JSON with this exact shape:
 {
@@ -177,8 +177,10 @@ Rules:
 - Pre-K/K should be short, playful, visual, and concrete.
 - Grades 1-5 should build reading, vocabulary, number sense, logic, and confidence.
 - Grades 6-8 should include evidence, strategy, multi-step reasoning, and clearer explanations.
-- Grades 9-12 should include more direct SAT-style reading, math reasoning, evidence, traps, and elimination.
-- The question count and page target must fit the grade and age.
+- Grades 9-12 should include direct SAT-style reading, math reasoning, evidence, traps, elimination, chart/data interpretation, and written explanation.
+- Minimum question counts by band: Pre-K/K 8, Grades 1-2 10, Grades 3-5 12, Grades 6-8 16, Grades 9-12 18.
+- Reading depth by band: Pre-K/K picture-supported mini passage, Grades 1-2 at least 150 words, Grades 3-5 at least 250 words, Grades 6-8 at least 400 words, Grades 9-12 at least 600 words across one or two original passages.
+- The page target must fit the grade and age: 1-2 pages for early learners, 3-5 pages for elementary, 5-7 pages for middle school, 6-9 pages for high school.
 - Do not include the learner nickname or any private data.`
       }
     ]
@@ -193,12 +195,12 @@ async function createWorksheetHtml(
 ): Promise<string> {
   return groqChat({
     temperature: 0.48,
-    maxTokens: 7800,
+    maxTokens: 12000,
     messages: [
       {
         role: "system",
         content:
-          "You create high-quality printable educational HTML workbooks. Return only one complete HTML document. No Markdown, no commentary, no code fences. Do not include scripts, external URLs, external assets, iframes, forms, or event handlers."
+          "You create rigorous, grade-appropriate printable educational HTML workbooks. Return only one complete HTML document. No Markdown, no commentary, no code fences. Do not include scripts, external URLs, external assets, iframes, forms, or event handlers. Never create a shallow quiz. Multiple-choice answers must include the correct answer exactly; never say the closest option is correct."
       },
       {
         role: "user",
@@ -216,7 +218,7 @@ async function repairWorksheetHtml(
 ): Promise<string> {
   return groqChat({
     temperature: 0.15,
-    maxTokens: 7800,
+    maxTokens: 12000,
     messages: [
       {
         role: "system",
@@ -236,7 +238,33 @@ Learner profile:
 Learning blueprint:
 ${JSON.stringify(blueprint, null, 2)}
 
-Repair the HTML so it is a complete static printable A4 worksheet. Keep the worksheet content, answer sheet, explanations, vocabulary, strategy section, embedded CSS, and lightweight inline SVG visuals.
+# NON-NEGOTIABLE QUALITY FLOOR
+
+This must be a substantial workbook, not a short sample quiz. Follow the blueprint question count, and never produce fewer than these minimums:
+- Pre-K/Kindergarten: 8 questions, at least 3 sections, at least 3 vocabulary/picture-word items.
+- Grades 1-2: 10 questions, at least 4 sections, at least 150 words of original reading passage text, at least 4 vocabulary words.
+- Grades 3-5: 12 questions, at least 5 sections, at least 250 words of original reading passage text, at least 5 vocabulary words.
+- Grades 6-8: 16 questions, at least 6 sections, at least 400 words of original reading passage text, at least 6 vocabulary words.
+- Grades 9-12: 18 questions, at least 7 sections, at least 600 words of original reading passage text across one or two passages, at least 8 vocabulary words, direct SAT-style questions.
+
+Required workbook sections:
+- Cover/header with learner placeholder {{LEARNER_NICKNAME}}, grade, age, interests, and workbook mission.
+- Reading comprehension with original passage text.
+- Vocabulary in context with definitions, examples, and memory hooks.
+- Grammar or writing.
+- Math reasoning with multi-step problems.
+- Science or social studies/history.
+- Logic, pattern, chart, or data interpretation.
+- Full answer sheet.
+- Smart Test Strategies & SAT Power Tips.
+
+Required HTML markers for validation:
+- Add data-reading-passage="true" to each original reading passage container.
+- Add data-question="true" to every question/activity container.
+- Add data-answer="true" to every answer sheet item.
+- Add data-vocab="true" to every vocabulary word card.
+
+Repair the HTML so it is a complete, rigorous, static printable A4 workbook that satisfies every minimum. Keep or expand the worksheet content, answer sheet, explanations, vocabulary, strategy section, embedded CSS, and lightweight inline SVG visuals. Do not merely fix syntax; fix thin content, missing reading depth, missing answer details, and missing required markers.
 
 Unsafe HTML to repair:
 ${html}`
@@ -379,7 +407,8 @@ For younger learners, frame this as "future test skill" thinking in kid-friendly
 
 If reading comprehension is included:
 - Use an original passage only
-- Include comprehension questions
+- Make the passage challenging for the grade, with enough length and complexity to support real comprehension questions
+- Include questions about main idea, evidence, inference, vocabulary in context, author's purpose/tone, and comparing ideas when grade-appropriate
 - Include hard words from the passage
 - Define each hard word simply
 - Give a child-friendly example sentence
@@ -394,6 +423,15 @@ At the end, include a full answer sheet. For every question include:
 - Why common wrong answers are wrong when relevant
 - Skill being tested
 - Tip or trick to solve faster next time
+
+For every multiple-choice question:
+- Provide exactly one correct option.
+- The correct answer must appear as one of the visible answer choices.
+- Wrong options should be plausible but clearly wrong after careful reasoning.
+- Do not write "closest answer"; if no option is correct, rewrite the choices.
+
+For high school learners:
+- Include direct SAT-style evidence questions, vocabulary-in-context questions, trap-answer elimination notes, chart/data interpretation, and multi-step word problems.
 
 # STRATEGY SECTION
 
@@ -515,6 +553,26 @@ function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
   };
 }
 
+function validateWorksheetHtml(
+  content: string,
+  input: WorksheetInput,
+  blueprint: LearningBlueprint
+): { ok: true; html: string } | { ok: false; reason: string } {
+  const staticValidation = validateStaticHtml(content);
+
+  if (!staticValidation.ok) {
+    return staticValidation;
+  }
+
+  const qualityValidation = validateHtmlQuality(staticValidation.html, input, blueprint);
+
+  if (!qualityValidation.ok) {
+    return qualityValidation;
+  }
+
+  return staticValidation;
+}
+
 function validateStaticHtml(content: string): { ok: true; html: string } | { ok: false; reason: string } {
   const html = extractHtmlDocument(content);
   const htmlForSafetyScan = html.replace(/\s+xmlns=["']http:\/\/www\.w3\.org\/2000\/svg["']/gi, "");
@@ -561,6 +619,199 @@ function validateStaticHtml(content: string): { ok: true; html: string } | { ok:
     ok: true,
     html
   };
+}
+
+function validateHtmlQuality(
+  html: string,
+  input: WorksheetInput,
+  blueprint: LearningBlueprint
+): { ok: true } | { ok: false; reason: string } {
+  const profile = qualityProfileFor(input);
+  const plainText = stripHtml(html);
+  const lower = plainText.toLowerCase();
+  const normalizedLower = lower.replace(/[-–—]/g, " ");
+  const studentText = plainText.split(/answer sheet/i)[0] || plainText;
+  const readingText = extractMarkedText(html, "data-reading-passage");
+  const questionCount = countRequiredMarker(html, "data-question");
+  const answerCount = countRequiredMarker(html, "data-answer");
+  const vocabCount = countRequiredMarker(html, "data-vocab");
+  const targetQuestionCount = Math.min(
+    24,
+    Math.max(profile.minQuestions, Math.floor(blueprint.questionCount || 0))
+  );
+
+  if (html.length < profile.minHtmlCharacters) {
+    return {
+      ok: false,
+      reason: `Workbook is too short (${html.length} HTML characters). Minimum for ${input.grade}/age ${input.age}: ${profile.minHtmlCharacters}. Expand sections, reading, questions, visuals, and answer explanations.`
+    };
+  }
+
+  if (wordCount(studentText) < profile.minStudentWords) {
+    return {
+      ok: false,
+      reason: `Student-facing workbook content is too thin (${wordCount(studentText)} words before answer sheet). Minimum: ${profile.minStudentWords}.`
+    };
+  }
+
+  if (questionCount < targetQuestionCount) {
+    return {
+      ok: false,
+      reason: `Too few marked questions (${questionCount}). Add data-question="true" to every question and include at least ${targetQuestionCount} grade-appropriate questions.`
+    };
+  }
+
+  if (answerCount < targetQuestionCount) {
+    return {
+      ok: false,
+      reason: `Too few marked answer explanations (${answerCount}). Add data-answer="true" to each answer-sheet item and include at least ${targetQuestionCount}.`
+    };
+  }
+
+  if (vocabCount < profile.minVocabularyCards) {
+    return {
+      ok: false,
+      reason: `Too few vocabulary cards (${vocabCount}). Add at least ${profile.minVocabularyCards} data-vocab="true" cards with definition, example, and memory hint.`
+    };
+  }
+
+  if (wordCount(readingText) < profile.minReadingWords) {
+    return {
+      ok: false,
+      reason: `Reading passage is too short (${wordCount(readingText)} words). Minimum: ${profile.minReadingWords} words in containers marked data-reading-passage="true".`
+    };
+  }
+
+  for (const required of profile.requiredTerms) {
+    if (!normalizedLower.includes(required)) {
+      return {
+        ok: false,
+        reason: `Workbook is missing required rigor signal: "${required}". Add this content in a grade-appropriate way.`
+      };
+    }
+  }
+
+  if (!/common wrong|wrong answer|trap answer|why .* wrong/i.test(plainText)) {
+    return {
+      ok: false,
+      reason:
+        "Answer sheet must explain common wrong answers or trap answers, not only the correct answer."
+    };
+  }
+
+  if (!/skill being tested|tested skill|skill:/i.test(plainText)) {
+    return {
+      ok: false,
+      reason: "Answer sheet must label the skill being tested for each question."
+    };
+  }
+
+  if (!/tip|trick|faster next time|next time/i.test(plainText)) {
+    return {
+      ok: false,
+      reason: "Answer sheet must include a tip or trick for solving faster next time."
+    };
+  }
+
+  return { ok: true };
+}
+
+function qualityProfileFor(input: WorksheetInput) {
+  if (input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten") {
+    return {
+      minHtmlCharacters: 9000,
+      minStudentWords: 550,
+      minQuestions: 8,
+      minReadingWords: 70,
+      minVocabularyCards: 3,
+      requiredTerms: ["answer sheet", "smart test strategies"]
+    };
+  }
+
+  if (input.age <= 10) {
+    return {
+      minHtmlCharacters: 13000,
+      minStudentWords: 900,
+      minQuestions: input.age <= 8 ? 10 : 12,
+      minReadingWords: input.age <= 8 ? 150 : 250,
+      minVocabularyCards: input.age <= 8 ? 4 : 5,
+      requiredTerms: ["reading comprehension", "vocabulary", "math reasoning", "answer sheet"]
+    };
+  }
+
+  if (input.age <= 14) {
+    return {
+      minHtmlCharacters: 18000,
+      minStudentWords: 1300,
+      minQuestions: 16,
+      minReadingWords: 400,
+      minVocabularyCards: 6,
+      requiredTerms: [
+        "reading comprehension",
+        "vocabulary",
+        "math reasoning",
+        "logic",
+        "answer sheet",
+        "smart test strategies"
+      ]
+    };
+  }
+
+  return {
+    minHtmlCharacters: 24000,
+    minStudentWords: 1800,
+    minQuestions: 18,
+    minReadingWords: 600,
+    minVocabularyCards: 8,
+    requiredTerms: [
+      "sat",
+      "reading comprehension",
+      "vocabulary in context",
+      "evidence",
+      "trap answer",
+      "math reasoning",
+      "answer sheet",
+      "smart test strategies"
+    ]
+  };
+}
+
+function countRequiredMarker(html: string, marker: string): number {
+  return (html.match(new RegExp(`${marker}=["']true["']`, "gi")) || []).length;
+}
+
+function extractMarkedText(html: string, marker: string): string {
+  const chunks: string[] = [];
+  const pattern = new RegExp(
+    `<([a-z0-9]+)[^>]*${marker}=["']true["'][^>]*>([\\s\\S]*?)<\\/\\1>`,
+    "gi"
+  );
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(html)) !== null) {
+    chunks.push(stripHtml(match[2]));
+  }
+
+  return chunks.join(" ");
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((word) => /[A-Za-z0-9]/.test(word)).length;
 }
 
 function extractHtmlDocument(content: string): string {
