@@ -1,4 +1,5 @@
 import Image from "next/image";
+import WorksheetCreator from "./components/WorksheetCreator";
 
 const contactEmail =
   process.env.NEXT_PUBLIC_CONTACT_EMAIL || "hello@paperstride.org";
@@ -35,6 +36,7 @@ export default function Home() {
           <span>PaperStride</span>
         </a>
         <nav className="nav-links" aria-label="Primary navigation">
+          <a href="#worksheet-creator">Create</a>
           <a href="#focus">Focus</a>
           <a href="#privacy">Privacy</a>
           <a href="#early-access">Early access</a>
@@ -61,8 +63,8 @@ export default function Home() {
             <a className="button primary" href="#early-access">
               Follow the beta
             </a>
-            <a className="button secondary" href="#focus">
-              See the focus
+            <a className="button secondary" href="#worksheet-creator">
+              Make a worksheet
             </a>
           </div>
         </div>
@@ -72,9 +74,11 @@ export default function Home() {
         <div className="intro-grid">
           <p>Pre-K to Grade 8 printable worksheets</p>
           <p>Math and reading first</p>
-          <p>AI-assisted generation coming soon</p>
+          <p>AI-assisted printable PDFs</p>
         </div>
       </section>
+
+      <WorksheetCreator />
 
       <section className="section" id="focus" aria-labelledby="focus-title">
         <div className="section-heading">
@@ -114,11 +118,11 @@ export default function Home() {
       <section className="section privacy" id="privacy" aria-labelledby="privacy-title">
         <div className="privacy-panel">
           <p className="eyebrow">Privacy by default</p>
-          <h2 id="privacy-title">No child data needed for the first page.</h2>
+          <h2 id="privacy-title">Only the minimum needed for a worksheet.</h2>
           <p>
-            The public launch page does not collect student emails, full names,
-            or learner details. Future worksheet prompts will use only grade
-            band, subject, skill, difficulty, and interest theme.
+            The worksheet creator does not ask for student emails, accounts, or
+            full names. The AI prompt uses learning level, age, and interest
+            theme; the nickname is only used on the printable PDF.
           </p>
         </div>
       </section>
@@ -130,11 +134,11 @@ export default function Home() {
       >
         <div>
           <p className="eyebrow">Free beta</p>
-          <h2 id="early-access-title">AI-assisted worksheets are next.</h2>
+          <h2 id="early-access-title">Try the first worksheet creator.</h2>
           <p>
-            The first hosted version introduces PaperStride publicly. Worksheet
-            generation with Groq will be added behind server-only API routes
-            after the page is live.
+            PaperStride now has a starter PDF flow. The next updates can add
+            subject choices, grade-specific skills, worksheet styles, and saved
+            sample packs.
           </p>
         </div>
         <a

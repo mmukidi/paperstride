@@ -88,6 +88,7 @@ SITE_DOMAIN=paperstride.duckdns.org
 NEXT_PUBLIC_SITE_URL=https://paperstride.duckdns.org
 NEXT_PUBLIC_CONTACT_EMAIL=your-email@example.com
 GROQ_API_KEY=your-groq-key-when-generation-is-added
+GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
 ## 5. Start the Website
@@ -128,5 +129,7 @@ docker image prune -f
 
 - Keep `GROQ_API_KEY` only in `.env` on the server.
 - Never expose the key in browser code.
-- Future prompts should send only grade band, subject, skill, difficulty, and interest theme.
+- Worksheet prompts send grade or level, age, and interest theme.
+- The learner nickname is used only in the printable PDF heading.
 - Do not send full names, student emails, or private learner notes.
+- If `GROQ_API_KEY` is empty, the site returns a sample worksheet PDF for testing.
