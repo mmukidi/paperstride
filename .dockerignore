@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.git
+.next
+node_modules
+coverage
+README.md
+docs
+scripts
