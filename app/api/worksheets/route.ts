@@ -96,7 +96,7 @@ async function parseInput(request: NextRequest): Promise<WorksheetInput> {
   const age = Number(body.age);
 
   if (!childName) {
-    throw new Error("Please add a first name or nickname.");
+    throw new Error("Please add a nickname.");
   }
 
   if (!allowedGrades.has(grade)) {

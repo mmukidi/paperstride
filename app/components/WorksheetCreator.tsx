@@ -26,7 +26,7 @@ const ageOptions = Array.from({ length: 24 }, (_, index) => index + 3);
 type CreatorStatus = "idle" | "loading" | "success" | "error";
 
 export default function WorksheetCreator() {
-  const [childName, setChildName] = useState("");
+  const [nickname, setNickname] = useState("");
   const [grade, setGrade] = useState("Grade 2");
   const [age, setAge] = useState("7");
   const [interests, setInterests] = useState("");
@@ -45,7 +45,7 @@ export default function WorksheetCreator() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          childName,
+          childName: nickname,
           grade,
           age,
           interests
@@ -99,15 +99,15 @@ export default function WorksheetCreator() {
 
       <form className="creator-form" onSubmit={handleSubmit}>
         <label>
-          <span>Learner&apos;s first name or nickname</span>
+          <span>Learner nickname</span>
           <input
-            autoComplete="given-name"
+            autoComplete="off"
             maxLength={40}
             name="childName"
-            onChange={(event) => setChildName(event.target.value)}
+            onChange={(event) => setNickname(event.target.value)}
             placeholder="Ava"
             required
-            value={childName}
+            value={nickname}
           />
         </label>
 
