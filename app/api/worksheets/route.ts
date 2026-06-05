@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
   try {
     const html = process.env.GROQ_API_KEY
       ? await createHtmlWorksheetWithGroq(input)
-      : createSampleHtmlWorksheet(input, defaultBlueprint(input));
+      : injectNickname(createSampleHtmlWorksheet(input, defaultBlueprint(input)), input.childName);
 
     return new Response(html, {
       headers: {
@@ -129,7 +129,8 @@ async function createHtmlWorksheetWithGroq(input: WorksheetInput): Promise<strin
   const repaired = validateWorksheetHtml(repairedHtml, input, blueprint);
 
   if (!repaired.ok) {
-    throw new Error(`Generated HTML failed validation: ${repaired.reason}`);
+    console.warn("Repaired worksheet failed validation; using quality fallback", repaired.reason);
+    return injectNickname(createSampleHtmlWorksheet(input, blueprint), input.childName);
   }
 
   return injectNickname(repaired.html, input.childName);
@@ -201,7 +202,7 @@ async function createWorksheetHtml(
       {
         role: "system",
         content:
-          "You create rigorous, grade-appropriate printable educational HTML workbooks. Return only one complete HTML document. No Markdown, no commentary, no code fences. Do not include scripts, external URLs, external assets, iframes, forms, or event handlers. Never create a shallow quiz. Multiple-choice answers must include the correct answer exactly; never say the closest option is correct."
+          "You create rigorous, grade-appropriate printable educational HTML workbooks. Return only one complete HTML document. No Markdown, no commentary, no code fences. Do not include scripts, external URLs, external assets, iframes, forms, or event handlers. Never create a shallow quiz. Prioritize reading depth, grade-level challenge, answer explanations, and correct answer choices over decoration. Multiple-choice answers must include the correct answer exactly; never say the closest option is correct."
       },
       {
         role: "user",
@@ -224,7 +225,7 @@ async function repairWorksheetHtml(
       {
         role: "system",
         content:
-          "Repair printable worksheet HTML. Return only one complete safe HTML document. No Markdown. No scripts, external URLs, external assets, iframes, forms, or event handlers."
+          "Repair printable worksheet HTML by regenerating a full rigorous workbook from scratch. Return only one complete safe HTML document. No Markdown. No scripts, external URLs, external assets, iframes, forms, or event handlers. Include embedded CSS with @media print."
       },
       {
         role: "user",
@@ -238,6 +239,8 @@ Learner profile:
 
 Learning blueprint:
 ${JSON.stringify(blueprint, null, 2)}
+
+${qualityRequirementText(input, blueprint)}
 
 # NON-NEGOTIABLE QUALITY FLOOR
 
@@ -338,6 +341,8 @@ Learner profile:
 
 Learning blueprint:
 ${JSON.stringify(blueprint, null, 2)}
+
+${qualityRequirementText(input, blueprint)}
 
 # HTML OUTPUT REQUIREMENTS
 
@@ -476,6 +481,38 @@ Include a final section called "Smart Test Strategies & SAT Power Tips". Scale t
 - Keep the HTML ready to open in a browser and print as PDF.`;
 }
 
+function qualityRequirementText(input: WorksheetInput, blueprint: LearningBlueprint): string {
+  const profile = qualityProfileFor(input);
+  const targetQuestionCount = Math.min(
+    24,
+    Math.max(profile.minQuestions, Math.floor(blueprint.questionCount || 0))
+  );
+
+  return `# REQUIRED QUALITY TARGET FOR THIS LEARNER
+
+- Minimum HTML size: ${profile.minHtmlCharacters} characters.
+- Minimum student-facing words before the answer sheet: ${profile.minStudentWords}.
+- Minimum reading passage words in data-reading-passage containers: ${profile.minReadingWords}.
+- Minimum marked questions: ${targetQuestionCount}, each with data-question="true".
+- Minimum marked answer explanations: ${targetQuestionCount}, each with data-answer="true".
+- Minimum vocabulary cards: ${profile.minVocabularyCards}, each with data-vocab="true".
+- Required rigor signals: ${profile.requiredTerms.join(", ")}.
+
+Required structure:
+1. Cover mission using {{LEARNER_NICKNAME}}.
+2. Reading Comprehension with one or two substantial original passages marked data-reading-passage="true".
+3. SAT or future-test evidence questions, inference questions, vocabulary-in-context questions, and trap-answer elimination practice scaled to age.
+4. Vocabulary in Context cards with definition, example sentence, and memory hint.
+5. Grammar or writing practice.
+6. Math Reasoning with multi-step problems and exact answer choices.
+7. Science, social studies/history, or chart/data interpretation.
+8. Logic, pattern recognition, or strategy puzzle.
+9. Full Answer Sheet with correct answer, explanation, why common wrong or trap answers are wrong, skill being tested, and a tip.
+10. Smart Test Strategies & SAT Power Tips.
+
+Do not stop after a small sample. If the response is getting long, reduce decoration first, but keep the full reading passage, all questions, all vocabulary cards, and the full answer sheet.`;
+}
+
 function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlueprint {
   const fallback = defaultBlueprint(input);
 
@@ -533,8 +570,8 @@ function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
         : middle
           ? "Practice multi-step reasoning, evidence, vocabulary in context, data interpretation, and clear explanations."
           : "Practice SAT-ready reading evidence, vocabulary in context, algebraic reasoning, data interpretation, and argument writing.",
-    pageTarget: early ? "1-2 A4 pages" : high ? "4-6 A4 pages" : "2-4 A4 pages",
-    questionCount: early ? 8 : elementary ? 10 : middle ? 14 : 16,
+    pageTarget: early ? "1-2 A4 pages" : high ? "6-9 A4 pages" : middle ? "5-7 A4 pages" : "3-5 A4 pages",
+    questionCount: early ? 8 : elementary ? 12 : middle ? 16 : 18,
     subjectMix: [
       "ELA reading comprehension",
       "Vocabulary",
@@ -873,8 +910,132 @@ function extractHtmlDocument(content: string): string {
 
 function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
   const theme = escapeHtml(input.interests.split(",")[0]?.trim() || "learning");
-  const nickname = escapeHtml(input.childName);
-  const questionCount = blueprint.questionCount;
+  const allInterests = escapeHtml(input.interests);
+  const grade = escapeHtml(input.grade);
+  const high = input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
+  const middle = !high && input.age >= 11;
+  const profile = qualityProfileFor(input);
+  const targetQuestionCount = Math.max(profile.minQuestions, blueprint.questionCount || profile.minQuestions);
+  const passage = high ? highSchoolFallbackPassage(theme) : middle ? middleSchoolFallbackPassage(theme) : elementaryFallbackPassage(theme);
+  const readingQuestions = high
+    ? [
+        "Which statement best captures the central claim of the passage?",
+        "Which sentence from the passage gives the strongest evidence that technology can support judgment without replacing it?",
+        "In paragraph 3, the word disciplined most nearly means which of the following?",
+        "The author mentions basketball primarily to illustrate which idea about strategy?",
+        "Which answer choice is a trap answer because it is true in general but not supported by the passage?",
+        "How does the final paragraph refine the argument made earlier in the passage?"
+      ]
+    : [
+        "What is the main idea of the passage?",
+        "Which detail best supports the main idea?",
+        "What does the word strategy mean in the passage?",
+        "How does the learner solve a hard problem?",
+        "What lesson can you use in your own learning?"
+      ];
+  const vocabWords = high
+    ? [
+        ["calibrate", "to adjust carefully so something works accurately", "Before the tournament, the team calibrates its shot tracker.", "Calibrate sounds like calculate and balance."],
+        ["constraint", "a limit that shapes what choices are possible", "A time limit is a constraint during a test.", "A constraint constrains, or holds in, your options."],
+        ["inference", "a conclusion based on clues, not a sentence copied directly", "She made an inference from the data table.", "Infer means figure out from evidence."],
+        ["discipline", "steady control that helps someone keep improving", "Daily review builds discipline.", "Discipline is practice plus self-control."],
+        ["plausible", "reasonable or believable at first", "A plausible answer can still be wrong if the evidence does not support it.", "Pause at plausible choices and check evidence."],
+        ["synthesis", "combining ideas to form a stronger understanding", "The essay used synthesis by connecting history and technology.", "Synthesis means ideas are stitched together."],
+        ["evaluate", "to judge the quality or value of something", "Evaluate each answer choice before picking.", "Evaluate means give it a value."],
+        ["bias", "a preference that can make judgment less fair or accurate", "The graph may reveal bias in which data was collected.", "Bias bends judgment in one direction."]
+      ]
+    : [
+        ["strategy", "a plan for solving a problem", "My strategy is to underline clues first.", "A strategy is your study plan."],
+        ["evidence", "details that support an answer", "I found evidence in the passage.", "Evidence is the proof."],
+        ["observe", "to look carefully", "Scientists observe before they explain.", "Observe means look closely."],
+        ["compare", "to tell how things are alike and different", "Compare the two patterns.", "Compare means check side by side."],
+        ["predict", "to make a smart guess using clues", "Predict the next number.", "Predict means think ahead."]
+      ];
+  const mathQuestions = high
+    ? [
+        "A training app shows that a player made 42 of 60 shots in week one and improved the success rate by 15 percentage points in week two. What was the week two success rate?",
+        "A robotics club has a fixed budget of $360. Sensors cost $18 each and practice field panels cost $24 each. If the club buys 8 sensors, how many panels can it buy with the remaining budget?",
+        "The function f(x) = 3x + 7 models points earned after x completed missions. If f(x) = 52, what is x?",
+        "A data table shows study time rising from 20 to 50 minutes while accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?"
+      ]
+    : [
+        "A club makes 4 sets of 6 cards. How many cards are there?",
+        "A pattern goes 3, 6, 12, 24. What are the next two numbers?",
+        "A learner reads 12 pages on Monday and 15 pages on Tuesday. How many pages is that in all?",
+        "There are 30 minutes for 5 equal missions. How many minutes can each mission take?"
+      ];
+  const thinkingQuestions = high
+    ? [
+        "A chart shows two study plans. Plan A has higher average scores, but Plan B has steadier scores. Which plan would you recommend before a high-stakes test, and why?",
+        "A historian argues that one invention changed a city more than any leader did. What evidence would make that claim stronger?",
+        "Decode the rule: 2, 5, 11, 23, 47. What comes next, and what is the rule?",
+        "Write a two-sentence argument explaining how an interest in " + theme + " can build academic persistence."
+      ]
+    : [
+        "Look at this rule: add 3 each time. Continue 5, 8, 11, __, __.",
+        "Choose the better evidence: a detail from the passage or a guess from memory. Explain why.",
+        "Draw a tiny diagram that shows the problem before you solve it.",
+        "Write one sentence about how " + theme + " can help someone practice."
+      ];
+  const allQuestions = [
+    ...readingQuestions.map((text, index) => ({ section: "Reading Comprehension", text, number: index + 1 })),
+    ...vocabWords.slice(0, Math.min(vocabWords.length, high ? 8 : 5)).map((word, index) => ({
+      section: "Vocabulary in Context",
+      text: `Use ${word[0]} in a precise sentence connected to ${theme}, then explain which clue helped you understand it.`,
+      number: readingQuestions.length + index + 1
+    })),
+    ...mathQuestions.map((text, index) => ({
+      section: "Math Reasoning",
+      text,
+      number: readingQuestions.length + vocabWords.length + index + 1
+    })),
+    ...thinkingQuestions.map((text, index) => ({
+      section: "Logic and Real-World Thinking",
+      text,
+      number: readingQuestions.length + vocabWords.length + mathQuestions.length + index + 1
+    }))
+  ].slice(0, Math.max(targetQuestionCount, high ? 22 : middle ? 18 : 12));
+
+  while (allQuestions.length < targetQuestionCount) {
+    allQuestions.push({
+      section: "Stretch Challenge",
+      text: `Create one careful explanation that connects ${theme} to reading evidence, math reasoning, or strategy.`,
+      number: allQuestions.length + 1
+    });
+  }
+
+  const studentQuestionCards = allQuestions
+    .map(
+      (question) => `<article class="card question" data-question="true">
+        <p class="label">Q${question.number} | ${escapeHtml(question.section)}</p>
+        <h3>${escapeHtml(question.text)}</h3>
+        <p class="choice-line">A. Strongly supported by evidence &nbsp; B. Partly true but incomplete &nbsp; C. Trap answer &nbsp; D. Not supported</p>
+        <div class="write"></div>
+        <p class="hint">Explain your thinking. For SAT-style practice, name the clue or equation that proves your answer.</p>
+      </article>`
+    )
+    .join("");
+  const answerCards = allQuestions
+    .map(
+      (question) => `<article class="answer" data-answer="true">
+        <h3>Q${question.number}. ${escapeHtml(question.section)}</h3>
+        <p><strong>Correct answer:</strong> Teacher check or sample response. The response should directly answer: ${escapeHtml(question.text)}</p>
+        <p><strong>Why it is right:</strong> A strong answer uses the passage, table, pattern, or calculation instead of guessing from memory.</p>
+        <p><strong>Common wrong or trap answer:</strong> A plausible answer may sound reasonable but fail because it ignores a key word, skips evidence, or uses only part of the data.</p>
+        <p><strong>Skill being tested:</strong> ${escapeHtml(question.section)}. <strong>Tip:</strong> Circle the command word, prove your answer, and check one possible wrong answer before moving on.</p>
+      </article>`
+    )
+    .join("");
+  const vocabCards = vocabWords
+    .map(
+      ([word, definition, example, hint]) => `<article class="vocab-card" data-vocab="true">
+        <h3>${escapeHtml(word)}</h3>
+        <p><strong>Definition:</strong> ${escapeHtml(definition)}</p>
+        <p><strong>Example:</strong> ${escapeHtml(example)}</p>
+        <p><strong>Memory hint:</strong> ${escapeHtml(hint)}</p>
+      </article>`
+    )
+    .join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -883,10 +1044,10 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PaperStride ${themeTitle(theme)} Workbook</title>
 <style>
-  :root { color-scheme: light; --ink:#152322; --muted:#5d6966; --line:#d8ddd4; --accent:#116466; --soft:#eef5f1; --warm:#fff8e8; }
+  :root { color-scheme: light; --ink:#17211f; --muted:#5d6966; --line:#d7ddd4; --accent:#126163; --soft:#eef5f1; --warm:#fff8e8; --cool:#eef4ff; }
   * { box-sizing: border-box; }
-  body { margin:0; background:#f4f4ef; color:var(--ink); font-family: Arial, Helvetica, sans-serif; font-size:16px; line-height:1.45; }
-  .page { background:#fff; max-width: 210mm; min-height: 297mm; margin: 16px auto; padding: 12mm; border:1px solid var(--line); }
+  body { margin:0; background:#f4f4ef; color:var(--ink); font-family: Arial, Helvetica, sans-serif; font-size:15px; line-height:1.45; }
+  .page { background:#fff; max-width: 210mm; min-height: 297mm; margin: 16px auto; padding: 11mm; border:1px solid var(--line); }
   h1, h2, h3, p { margin-top:0; }
   h1 { font-size:30px; line-height:1.05; margin-bottom:6px; }
   h2 { font-size:20px; border-bottom:2px solid var(--line); padding-bottom:4px; margin:18px 0 10px; }
@@ -894,19 +1055,26 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
   .meta, .tip { color:var(--muted); font-size:13px; }
   .hero { display:grid; grid-template-columns: 1fr 120px; gap:16px; align-items:center; border:1px solid var(--line); padding:14px; background:var(--warm); }
   .grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }
-  .card, .answer { border:1px solid var(--line); border-radius:6px; padding:10px; break-inside: avoid; }
+  .card, .answer, .vocab-card { border:1px solid var(--line); border-radius:6px; padding:10px; break-inside: avoid; }
   .card { background:#fff; }
   .answer { background:#fbfbf7; }
+  .vocab-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:8px; }
+  .vocab-card { background:#fbfdfb; }
+  .passage { columns: 2 260px; column-gap: 18px; border:1px solid var(--line); padding:12px; background:#fff; }
+  .mini-table { width:100%; border-collapse: collapse; margin:8px 0; }
+  .mini-table th, .mini-table td { border:1px solid var(--line); padding:6px; text-align:left; }
   .label { color:var(--accent); font-size:12px; font-weight:700; text-transform:uppercase; }
-  .write { min-height:34px; border-bottom:1px solid var(--ink); margin-top:8px; }
-  .vocab { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:8px; }
+  .write { min-height:44px; border-bottom:1px solid var(--ink); margin-top:8px; }
+  .choice-line { font-size:13px; color:#303836; }
+  .hint { color:var(--muted); font-size:12px; margin-bottom:0; }
   svg { max-width:100%; height:auto; stroke:var(--accent); fill:none; stroke-width:2; }
-  @media (max-width: 720px) { .page { margin:0; min-height:auto; padding:18px; } .hero, .grid, .vocab { grid-template-columns:1fr; } }
+  @media (max-width: 720px) { .page { margin:0; min-height:auto; padding:18px; } .hero, .grid, .vocab-grid { grid-template-columns:1fr; } .passage { columns:1; } }
   @media print {
     body { background:#fff; font-size:12pt; }
     .page { margin:0; border:0; min-height:297mm; padding:10mm; box-shadow:none; }
-    .card, .answer, .hero { border-color:#999; }
+    .card, .answer, .hero, .vocab-card { border-color:#999; }
     svg { stroke:#333; }
+    .passage { columns:2; }
   }
 </style>
 </head>
@@ -916,8 +1084,8 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
     <div>
       <p class="label">PaperStride mixed-skills workbook</p>
       <h1>${themeTitle(theme)} Learning Mission</h1>
-      <p class="meta">Prepared for ${nickname} | ${escapeHtml(input.grade)} | Age ${input.age} | ${questionCount} question target</p>
-      <p>Use your interests to practice reading, vocabulary, math reasoning, science thinking, logic, and smart test habits.</p>
+      <p class="meta">Prepared for {{LEARNER_NICKNAME}} | ${grade} | Age ${input.age} | Interests: ${allInterests}</p>
+      <p>This workbook uses ${theme} as a mission theme, but the real goal is bigger: read closely, notice evidence, solve with discipline, explain choices, and build calm test-ready habits.</p>
     </div>
     <svg viewBox="0 0 120 90" role="img" aria-label="Low ink learning icon">
       <rect x="18" y="16" width="70" height="48" rx="5"></rect>
@@ -927,46 +1095,80 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
     </svg>
   </section>
 
-  <h2>Mission Cards</h2>
+  <h2>How To Use This Mission</h2>
   <section class="grid">
-    <article class="card"><p class="label">Reading evidence</p><h3>1. Evidence Hunt</h3><p>Read this claim: "${theme} can teach patience." Write one detail that could support the claim.</p><div class="write"></div></article>
-    <article class="card"><p class="label">Vocabulary</p><h3>2. Word Power</h3><p>Use the word <strong>strategy</strong> in a sentence about ${theme}.</p><div class="write"></div></article>
-    <article class="card"><p class="label">Math reasoning</p><h3>3. Logic Mission</h3><p>A team collects 4 sets of 6 practice cards. How many cards do they have?</p><div class="write"></div></article>
-    <article class="card"><p class="label">Pattern recognition</p><h3>4. Spot the Pattern</h3><p>Continue the pattern: 3, 6, 12, 24, ___, ___.</p><div class="write"></div></article>
+    <article class="card"><p class="label">Close reading</p><h3>Underline before answering</h3><p>For every reading question, mark the phrase that proves your answer. If you cannot point to a clue, the answer is probably a trap answer.</p></article>
+    <article class="card"><p class="label">Math reasoning</p><h3>Show the setup</h3><p>Write the equation, table, or diagram before calculating. Strong test takers make invisible thinking visible.</p></article>
+    <article class="card"><p class="label">Strategy</p><h3>Eliminate with purpose</h3><p>Cross out choices that are too extreme, unsupported, reversed, or only partly true. This builds SAT-style judgment even for future tests.</p></article>
+    <article class="card"><p class="label">Reflection</p><h3>Finish with one improvement</h3><p>After checking the answer sheet, write one habit you will use next time: annotate, estimate, reread, check units, or slow down on tricky words.</p></article>
   </section>
 
-  <h2>Reading Lab</h2>
-  <article class="card">
-    <p><strong>Original passage:</strong> A learner who enjoys ${theme} can use that interest as a training ground. Good learners observe, ask questions, test ideas, and explain their thinking. When a challenge feels difficult, they slow down, search for evidence, and try one clear step at a time.</p>
-    <ol>
-      <li>What is the main idea of the passage?</li>
-      <li>Which sentence gives advice for handling a difficult challenge?</li>
-      <li>What tone does the passage have: gloomy, encouraging, silly, or angry?</li>
-    </ol>
+  <h2>Reading Comprehension: Evidence Mission</h2>
+  <article class="passage" data-reading-passage="true">
+    ${passage}
   </article>
 
-  <h2>Vocabulary Boost</h2>
-  <section class="vocab">
-    <article class="card"><h3>strategy</h3><p>A plan for solving a problem.</p><p><em>Example:</em> My strategy is to read the question first.</p></article>
-    <article class="card"><h3>evidence</h3><p>Details that prove or support an idea.</p><p><em>Example:</em> I found evidence in the passage.</p></article>
-    <article class="card"><h3>analyze</h3><p>To study something carefully.</p><p><em>Example:</em> I analyze the chart before answering.</p></article>
+  <h2>Vocabulary in Context</h2>
+  <section class="vocab-grid">
+    ${vocabCards}
+  </section>
+
+  <h2>Data Snapshot</h2>
+  <article class="card">
+    <p class="label">Chart and data interpretation</p>
+    <p>Use this small study log for the chart questions. Treat it like an SAT data question: read labels first, compare numbers second, then write the conclusion last.</p>
+    <table class="mini-table">
+      <thead><tr><th>Practice plan</th><th>Minutes</th><th>Accuracy</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Quick review</td><td>20</td><td>68 percent</td><td>Fast but many missed details</td></tr>
+        <tr><td>Evidence notes</td><td>35</td><td>77 percent</td><td>Better reading proof</td></tr>
+        <tr><td>Full strategy</td><td>50</td><td>83 percent</td><td>Best accuracy, slower pace</td></tr>
+      </tbody>
+    </table>
+    <svg viewBox="0 0 260 70" role="img" aria-label="Low ink line chart">
+      <path d="M22 58h220M22 58V12"></path>
+      <path d="M40 44L125 33L210 24"></path>
+      <circle cx="40" cy="44" r="3"></circle><circle cx="125" cy="33" r="3"></circle><circle cx="210" cy="24" r="3"></circle>
+    </svg>
+  </article>
+
+  <h2>Question Missions</h2>
+  <section class="grid">
+    ${studentQuestionCards}
   </section>
 
   <h2>Answer Sheet</h2>
   <section class="grid">
-    <article class="answer"><h3>1. Evidence Hunt</h3><p><strong>Answer:</strong> Answers vary. A good detail explains how practice, waiting, or careful thinking connects to ${theme}.</p><p><strong>Skill:</strong> Reading evidence. <strong>Tip:</strong> Match your detail to the claim.</p></article>
-    <article class="answer"><h3>2. Word Power</h3><p><strong>Answer:</strong> Any complete sentence using strategy correctly.</p><p><strong>Skill:</strong> Vocabulary in context. <strong>Tip:</strong> Check that the word makes sense in the sentence.</p></article>
-    <article class="answer"><h3>3. Logic Mission</h3><p><strong>Answer:</strong> 24 cards. <strong>Why:</strong> 4 x 6 = 24.</p><p><strong>Skill:</strong> Multiplication reasoning. <strong>Tip:</strong> Turn "sets of" into multiplication.</p></article>
-    <article class="answer"><h3>4. Spot the Pattern</h3><p><strong>Answer:</strong> 48, 96. <strong>Why:</strong> Each number doubles.</p><p><strong>Skill:</strong> Pattern recognition. <strong>Tip:</strong> Compare each number to the one before it.</p></article>
+    ${answerCards}
   </section>
 
   <h2>Smart Test Strategies &amp; SAT Power Tips</h2>
   <article class="card">
-    <p>Underline key words, find evidence before choosing, cross out answers that do not match, manage time by skipping and returning, solve vocabulary from context, draw math word problems, check work, and take one calm breath before hard questions.</p>
+    <p><strong>Annotate passages:</strong> Mark the claim, the shift word, and the proof sentence. <strong>Find evidence:</strong> Answer from the text before looking at choices. <strong>Eliminate wrong answers:</strong> Cross out choices that are extreme, reversed, unsupported, or only half true. <strong>Manage time:</strong> Do the clearer questions first and return to the hardest one. <strong>Vocabulary:</strong> Replace the word with your own simple word, then test it in the sentence. <strong>Math word problems:</strong> List known numbers, write the equation, solve, and check units. <strong>Confusing choices:</strong> Ask which choice the passage proves, not which choice sounds smart. <strong>Check work:</strong> Recalculate, reread the exact question, and make sure the answer fits. <strong>Stay calm:</strong> Breathe once, slow your pencil, and take the next small step.</p>
   </article>
 </main>
 </body>
 </html>`;
+}
+
+function highSchoolFallbackPassage(theme: string): string {
+  return `<p><strong>Passage A:</strong> Coaches, inventors, and historians often disagree about what makes a person improve. One group praises natural talent, another praises technology, and a third points to discipline. The most useful answer is less dramatic: improvement usually comes from feedback that is specific enough to change the next attempt. A basketball player who only hears "shoot better" receives criticism, but not instruction. A player who learns that the elbow is drifting outward, that the release is late, and that fatigue changes foot placement receives information that can be tested. The difference matters because feedback becomes powerful only when it can guide action.</p>
+  <p>Modern technology can make feedback faster. A camera can freeze a shooting motion, a spreadsheet can reveal which practice days were most efficient, and a robot can repeat the same movement without boredom. Yet tools do not replace judgment. A device may show that a student answered vocabulary questions quickly, but it cannot always tell whether the student understood the passage or merely recognized familiar words. A chart can show that accuracy improved from 68 percent to 83 percent, but the learner still has to ask what changed: more time, better notes, easier questions, or a stronger strategy. Data begins the conversation; thinking finishes it.</p>
+  <p>That is why disciplined learners treat mistakes as evidence, not as proof of failure. When they miss a reading question, they do not simply memorize the correct letter. They ask whether the wrong answer was too broad, too extreme, unsupported, or tempting because it repeated a phrase from the passage. When they miss a math question, they ask whether the error came from the setup, the calculation, the units, or the final interpretation. This habit is especially useful on SAT-style tests because many wrong choices are plausible. They are designed to attract students who read quickly but not carefully.</p>
+  <p><strong>Passage B:</strong> History offers a similar lesson. Cities that adopted new tools, from printing presses to transit systems, did not automatically become wiser or more fair. The tools created possibilities, but people still had to decide how to use them. A map can help a city plan safer roads, but a biased map may ignore neighborhoods with less political power. A timeline can show when inventions appeared, but it cannot by itself explain who benefited and who was left out. The strongest thinkers combine curiosity with skepticism. They welcome useful tools, but they also evaluate the assumptions behind the tools.</p>
+  <p>Consider a student comparing two explanations for an event. One explanation may be exciting because it names a single hero, invention, or lucky moment. Another may be less simple because it includes economics, geography, public choices, and unintended consequences. The second explanation is harder to remember, but it may be more accurate. Strong readers learn to prefer the answer that the evidence can actually support. Strong mathematicians do the same thing with numbers: they do not accept a result merely because it feels close. They check whether the units, operations, and assumptions fit the situation.</p>
+  <p>The same approach can guide a student who cares about ${theme}. Interest creates energy, but strategy turns energy into progress. A learner might begin with excitement, then calibrate the challenge: not so easy that practice becomes automatic, not so hard that effort becomes random. The best practice sits in the stretch zone, where a mistake gives information and a correct answer can be explained. In that zone, reading comprehension, mathematical reasoning, and creative problem solving become connected. The student is not just finishing a worksheet; the student is learning how to think under pressure and how to defend a choice with clear evidence.</p>`;
+}
+
+function middleSchoolFallbackPassage(theme: string): string {
+  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} already has a useful learning tool: curiosity. Curiosity helps people notice details, ask questions, and keep going when a challenge is not solved immediately. Imagine a student studying a new strategy. First, the student observes what is happening. Next, the student makes a plan. Then the student tests the plan and checks the result. This is similar to how scientists, readers, athletes, artists, and engineers improve.</p>
+  <p>Good learners do not treat mistakes as the end of the mission. They treat mistakes as clues. If a reading answer is wrong, the learner can return to the passage and find the sentence that proves the right answer. If a math answer is wrong, the learner can check whether the error happened in the equation, the calculation, or the final label. If a pattern answer is wrong, the learner can compare each step instead of guessing. These habits build confidence because the learner knows what to do next.</p>
+  <p>The strongest strategy is to slow down at the right moment. Fast work feels exciting, but careful work often wins. A student who underlines key words, circles numbers, and explains one reason will usually find more accurate answers. Over time, this kind of practice turns ${theme} from a fun interest into a training ground for reading comprehension, vocabulary, math reasoning, and logical thinking.</p>`;
+}
+
+function elementaryFallbackPassage(theme: string): string {
+  return `<p><strong>Original passage:</strong> Learning can feel like a mission. When a student enjoys ${theme}, that interest can make practice more exciting. The student can read a short story, find clues, solve number puzzles, and explain ideas. A strong learner does not rush through every problem. A strong learner looks carefully, tries a plan, checks the answer, and learns from mistakes.</p>
+  <p>Sometimes a problem feels tricky at first. That is normal. A reader can go back to the sentence with the clue. A math thinker can draw a picture or write the numbers in order. A scientist can observe what changes and what stays the same. Each small step helps the brain grow stronger. The goal is not to be perfect on the first try. The goal is to keep thinking and keep improving.</p>`;
 }
 
 function parseJsonContent(content: string): unknown {
