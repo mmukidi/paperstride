@@ -587,7 +587,10 @@ function validateWorksheetHtml(
 
 function validateStaticHtml(content: string): { ok: true; html: string } | { ok: false; reason: string } {
   const html = extractHtmlDocument(content);
-  const htmlForSafetyScan = html.replace(/\s+xmlns=["']http:\/\/www\.w3\.org\/2000\/svg["']/gi, "");
+  const htmlForSafetyScan = html.replace(
+    /\s+xmlns(?::[a-z0-9_-]+)?=["']https?:\/\/www\.w3\.org\/[^"']+["']/gi,
+    ""
+  );
   const lower = html.toLowerCase();
 
   const forbiddenPatterns: Array<[RegExp, string]> = [
