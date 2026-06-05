@@ -137,7 +137,7 @@ async function createWorksheetWithGroq(input: WorksheetInput): Promise<Worksheet
         {
           role: "system",
           content:
-            "You create printable, age-appropriate worksheets. Return only valid JSON. Do not ask for or include private personal data. Use original text only, not copyrighted passages."
+            "You create printable, age-appropriate worksheets for offline practice. Return only valid JSON. Do not ask for or include private personal data. Use original text only, not copyrighted passages. Questions must be clear, fair, grade-appropriate, and answerable from the worksheet or common classroom knowledge."
         },
         {
           role: "user",
@@ -164,8 +164,12 @@ Return JSON with this exact shape:
 
 Rules:
 - Make 2 sections with 4 questions each.
-- Include a blend of math, vocabulary, reading, reasoning, or writing that fits the level.
-- Keep questions concise enough to print cleanly.
+- Use the interest theme as context, not as a quiz about obscure facts.
+- Include a balanced mix of math, vocabulary, reading comprehension, reasoning, or short writing that fits the level.
+- For math questions, compute the answer carefully and include units when useful.
+- Avoid vague, trick, impossible, or overly broad questions.
+- Keep each question concise enough to print cleanly.
+- Include a complete answer key. For open-ended writing, describe what a good answer should include.
 - Do not include the learner's name.
 - Do not include online tasks, links, accounts, or screen activities.`
         }
