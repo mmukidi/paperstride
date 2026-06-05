@@ -3,7 +3,8 @@ const nextConfig = {
   output: "standalone",
   poweredByHeader: false,
   images: {
-    formats: ["image/avif", "image/webp"]
+    formats: ["image/avif", "image/webp"],
+    unoptimized: true
   }
 };
 

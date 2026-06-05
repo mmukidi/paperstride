@@ -130,6 +130,6 @@ docker image prune -f
 - Keep `GROQ_API_KEY` only in `.env` on the server.
 - Never expose the key in browser code.
 - Worksheet prompts send grade or level, age, and interest theme.
-- The learner nickname is used only in the printable PDF heading.
+- The learner nickname is used only in the printable workbook heading.
 - Do not send full names, student emails, or private learner notes.
-- If `GROQ_API_KEY` is empty, the site returns a sample worksheet PDF for testing.
+- If `GROQ_API_KEY` is empty, the site returns a sample printable HTML worksheet for testing.

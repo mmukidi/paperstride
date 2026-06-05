@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 
 const gradeOptions = [
   "Pre-K",
@@ -32,11 +32,14 @@ export default function WorksheetCreator() {
   const [interests, setInterests] = useState("");
   const [status, setStatus] = useState<CreatorStatus>("idle");
   const [message, setMessage] = useState("");
+  const [worksheetHtml, setWorksheetHtml] = useState("");
+  const previewRef = useRef<HTMLIFrameElement>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("loading");
-    setMessage("Preparing a printable worksheet...");
+    setMessage("Designing a printable workbook...");
+    setWorksheetHtml("");
 
     try {
       const response = await fetch("/api/worksheets", {
@@ -60,18 +63,11 @@ export default function WorksheetCreator() {
         );
       }
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "paperstride-worksheet.pdf";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      const html = await response.text();
+      setWorksheetHtml(html);
 
       setStatus("success");
-      setMessage("Your worksheet PDF is ready.");
+      setMessage("Your worksheet preview is ready.");
     } catch (error) {
       setStatus("error");
       setMessage(
@@ -80,6 +76,59 @@ export default function WorksheetCreator() {
           : "The worksheet could not be created right now. Please try again."
       );
     }
+  }
+
+  function createWorksheetUrl() {
+    if (!worksheetHtml) {
+      return "";
+    }
+
+    return URL.createObjectURL(
+      new Blob([worksheetHtml], {
+        type: "text/html;charset=utf-8"
+      })
+    );
+  }
+
+  function openPrintablePage() {
+    const url = createWorksheetUrl();
+
+    if (!url) {
+      return;
+    }
+
+    window.open(url, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  function printWorksheet() {
+    const url = createWorksheetUrl();
+
+    if (!url) {
+      return;
+    }
+
+    const printWindow = window.open(url, "_blank");
+    window.setTimeout(() => {
+      printWindow?.print();
+      URL.revokeObjectURL(url);
+    }, 800);
+  }
+
+  function downloadWorksheet() {
+    const url = createWorksheetUrl();
+
+    if (!url) {
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `paperstride-${nickname.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") || "worksheet"}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -93,7 +142,7 @@ export default function WorksheetCreator() {
         <h2 id="creator-title">Make a printable practice sheet.</h2>
         <p>
           Add a learner nickname, level, age, and a few interests. PaperStride
-          creates a simple PDF worksheet and answer key for offline practice.
+          creates a printable HTML workbook and answer key for offline practice.
         </p>
       </div>
 
@@ -157,13 +206,42 @@ export default function WorksheetCreator() {
         </label>
 
         <button className="button primary creator-submit" disabled={status === "loading"}>
-          {status === "loading" ? "Creating..." : "Create printable PDF"}
+          {status === "loading" ? "Creating..." : "Create workbook preview"}
         </button>
 
         <p className={`creator-message ${status}`} role="status">
           {message || "No student account or child email is required."}
         </p>
       </form>
+
+      {worksheetHtml ? (
+        <section className="worksheet-preview" aria-label="Generated worksheet preview">
+          <div className="preview-toolbar">
+            <div>
+              <p className="eyebrow">Printable preview</p>
+              <h3>Generated workbook</h3>
+            </div>
+            <div className="preview-actions">
+              <button className="button secondary" type="button" onClick={openPrintablePage}>
+                Open
+              </button>
+              <button className="button secondary" type="button" onClick={printWorksheet}>
+                Print
+              </button>
+              <button className="button primary" type="button" onClick={downloadWorksheet}>
+                Download HTML
+              </button>
+            </div>
+          </div>
+          <iframe
+            ref={previewRef}
+            className="preview-frame"
+            sandbox=""
+            srcDoc={worksheetHtml}
+            title="Generated PaperStride worksheet"
+          />
+        </section>
+      ) : null}
     </section>
   );
 }

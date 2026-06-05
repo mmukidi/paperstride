@@ -74,7 +74,7 @@ export default function Home() {
         <div className="intro-grid">
           <p>Pre-K to Grade 8 printable worksheets</p>
           <p>Math and reading first</p>
-          <p>AI-assisted printable PDFs</p>
+          <p>AI-assisted printable HTML workbooks</p>
         </div>
       </section>
 
@@ -102,7 +102,7 @@ export default function Home() {
           <p>
             PaperStride will start simple: no student accounts, no long online
             lessons, and no open-ended chat. The goal is a printable worksheet
-            and an answer key that match the learner's next useful challenge.
+            preview and answer key that match the learner's next useful challenge.
           </p>
         </div>
         <ol className="step-list">
@@ -122,7 +122,7 @@ export default function Home() {
           <p>
             The worksheet creator does not ask for student emails, accounts, or
             full names. The AI prompt uses learning level, age, and interest
-            theme; the nickname is only used on the printable PDF.
+            theme; the nickname is only used on the printable workbook.
           </p>
         </div>
       </section>
@@ -136,7 +136,7 @@ export default function Home() {
           <p className="eyebrow">Free beta</p>
           <h2 id="early-access-title">Try the first worksheet creator.</h2>
           <p>
-            PaperStride now has a starter PDF flow. The next updates can add
+            PaperStride now has a starter printable workbook flow. The next updates can add
             subject choices, grade-specific skills, worksheet styles, and saved
             sample packs.
           </p>
