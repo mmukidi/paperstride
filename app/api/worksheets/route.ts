@@ -269,8 +269,18 @@ Learner:
 
 Requirements:
 - The passage must be original, engaging, and tied to the interests, at least ${profile.minReadingWords} words, at this exact reading level.
+- Follow this blueprint exactly; it is the curriculum plan for the worksheet:
+  - Curriculum path: ${blueprint.curriculumPath}
+  - Grade expectations: ${blueprint.gradeExpectations}
+  - Motivation strategy: ${blueprint.motivationStrategy}
+  - Challenge level: ${blueprint.challengeLevel}
+  - Question formats: ${blueprint.questionFormats.join(", ")}
+  - Vocabulary plan: ${blueprint.vocabularyPlan}
+- Use the learner's interests as meaningful context, not just decoration. If there are multiple interests, weave at least two in naturally.
+- Keep tone age-appropriate: playful and concrete for elementary learners, more strategic for older learners.
 - Write ${readingCount} comprehension questions about the passage (main idea, evidence, vocabulary in context, inference as age allows). Where a multiple-choice question fits, give 3-4 options with exactly one correct option that appears in "choices"; otherwise use an empty "choices" array for a written response.
 - Pull ${vocabCount} useful words FROM the passage with a simple definition, an example sentence, and a memory hint.
+- Do not label the passage "Original passage:".
 
 Return JSON exactly:
 {
@@ -325,8 +335,19 @@ Section: ${section.subject}
 Skills to test: ${section.skills.join(", ") || "core skills for this subject"}
 Focus: ${section.focus}
 
+Blueprint contract:
+- Curriculum path: ${blueprint.curriculumPath}
+- Grade expectations: ${blueprint.gradeExpectations}
+- Motivation strategy: ${blueprint.motivationStrategy}
+- Challenge level: ${blueprint.challengeLevel}
+- Question formats to honor where appropriate: ${blueprint.questionFormats.join(", ")}
+- Answer expectations: ${blueprint.answerExpectations}
+- Test-readiness plan: ${blueprint.testReadinessPlan}
+
 Requirements:
-- Write EXACTLY ${section.questionCount} questions at this exact grade level, themed to the interests where natural.
+- Write EXACTLY ${section.questionCount} questions at this exact grade level, themed to the interests where natural and useful.
+- Use the section focus and listed skills as the authority. Do not introduce unrelated chart, data, or test-prep content unless the blueprint or section skills call for it.
+- Make the learner feel capable: include quick wins, curiosity, and concrete scenarios tied to the interests.
 - For ${section.subject}, prefer multiple choice when it fits: give 3-4 options with exactly one correct option that appears in "choices". For open-ended or writing prompts, use an empty "choices" array.
 - Every question needs a clear correct answer (or a model answer for open prompts) and a short explanation of why it is right.
 
@@ -876,6 +897,10 @@ function assembleWorksheet(
   const middle = !high && input.age >= 11;
   const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
   const answerContext = { high, isSpace: isSpaceTheme };
+  const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
+  const wantsData = blueprintWantsData(blueprint, plannedSections);
+  const dataSnapshot = dataSnapshotBlock(input, blueprint, plannedSections);
+  const strategyBlock = strategyBlockFor(input, blueprint);
   const passage = content.passageHtml
     ? content.passageHtml
     : high
@@ -913,7 +938,7 @@ function assembleWorksheet(
   }
 
   // Theme-aware question banks, one per canonical subject.
-  const banks = fallbackQuestionBanks({ high, theme, vocabWords });
+  const banks = fallbackQuestionBanks({ high, theme, vocabWords, wantsData });
 
   // Vocabulary questions are templated from the vocabulary words (AI or bank).
   const vocabQuestions: GeneratedQuestion[] = vocabWords.map(([word]) => ({
@@ -960,7 +985,6 @@ function assembleWorksheet(
 
   // Build questions strictly from the blueprint section plan: each section gets exactly
   // its planned count, AI-authored where available and bank-filled otherwise.
-  const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
   const builtSections = plannedSections.map((section) => {
     const ai = aiQuestionsFor(section.subject);
 
@@ -1006,8 +1030,8 @@ function assembleWorksheet(
         <h3>Q${q.number}. ${escapeHtml(q.section)}</h3>
         <p><strong>Correct answer:</strong> ${q.answerHtml}</p>
         <p><strong>Why it is right:</strong> ${q.explanationHtml}</p>
-        <p><strong>Common wrong or trap answer:</strong> A plausible answer may sound reasonable but fail because it ignores a key word, skips evidence, or uses only part of the data.</p>
-        <p><strong>Skill being tested:</strong> ${escapeHtml(q.section)}. <strong>Tip:</strong> Circle the command word, prove your answer, and check one possible wrong answer before moving on.</p>
+        <p><strong>Watch out for:</strong> ${escapeHtml(watchOutFor(q.section, high))}</p>
+        <p><strong>Skill being practiced:</strong> ${escapeHtml(q.section)}. <strong>Next time:</strong> ${escapeHtml(nextTimeTipFor(q.section, high))}</p>
       </article>`
     )
     .join("");
@@ -1082,7 +1106,7 @@ function assembleWorksheet(
       <p class="label">PaperStride mixed-skills workbook</p>
       <h1>${themeTitle(theme)} Learning Mission</h1>
       <p class="meta">Prepared for {{LEARNER_NICKNAME}} | ${grade} | Age ${input.age} | Interests: ${allInterests}</p>
-      <p>This workbook uses ${theme} as a mission theme, but the real goal is bigger: read closely, notice evidence, solve with discipline, explain choices, and build calm test-ready habits.</p>
+      <p>${escapeHtml(learnerFriendlyMissionCopy(input, blueprint))}</p>
     </div>
     <svg viewBox="0 0 120 90" role="img" aria-label="Low ink learning icon">
       <rect x="18" y="16" width="70" height="48" rx="5"></rect>
@@ -1110,24 +1134,7 @@ function assembleWorksheet(
     ${vocabCards}
   </section>
 
-  <h2>Data Snapshot</h2>
-  <article class="card">
-    <p class="label">Chart and data interpretation</p>
-    <p>Use this small study log for the chart questions. Treat it like an SAT data question: read labels first, compare numbers second, then write the conclusion last.</p>
-    <table class="mini-table">
-      <thead><tr><th>Practice plan</th><th>Minutes</th><th>Accuracy</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td>Quick review</td><td>20</td><td>68 percent</td><td>Fast but many missed details</td></tr>
-        <tr><td>Evidence notes</td><td>35</td><td>77 percent</td><td>Better reading proof</td></tr>
-        <tr><td>Full strategy</td><td>50</td><td>83 percent</td><td>Best accuracy, slower pace</td></tr>
-      </tbody>
-    </table>
-    <svg viewBox="0 0 260 70" role="img" aria-label="Low ink line chart">
-      <path d="M22 58h220M22 58V12"></path>
-      <path d="M40 44L125 33L210 24"></path>
-      <circle cx="40" cy="44" r="3"></circle><circle cx="125" cy="33" r="3"></circle><circle cx="210" cy="24" r="3"></circle>
-    </svg>
-  </article>
+  ${dataSnapshot}
 
   <h2>Question Missions</h2>
   ${questionSectionsHtml}
@@ -1140,9 +1147,9 @@ function assembleWorksheet(
     ${funZone.answersHtml}
   </section>
 
-  <h2>Smart Test Strategies &amp; SAT Power Tips</h2>
+  <h2>${escapeHtml(strategyBlock.title)}</h2>
   <article class="card">
-    <p><strong>Annotate passages:</strong> Mark the claim, the shift word, and the proof sentence. <strong>Find evidence:</strong> Answer from the text before looking at choices. <strong>Eliminate wrong answers:</strong> Cross out choices that are extreme, reversed, unsupported, or only half true. <strong>Manage time:</strong> Do the clearer questions first and return to the hardest one. <strong>Vocabulary:</strong> Replace the word with your own simple word, then test it in the sentence. <strong>Math word problems:</strong> List known numbers, write the equation, solve, and check units. <strong>Confusing choices:</strong> Ask which choice the passage proves, not which choice sounds smart. <strong>Check work:</strong> Recalculate, reread the exact question, and make sure the answer fits. <strong>Stay calm:</strong> Breathe once, slow your pencil, and take the next small step.</p>
+    <p>${strategyBlock.html}</p>
   </article>
 </main>
 </body>
@@ -1159,20 +1166,25 @@ function highSchoolFallbackPassage(theme: string): string {
 }
 
 function middleSchoolFallbackPassage(theme: string, interests: string): string {
-  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} can use that interest as a real investigation, not just a decoration on a worksheet. The research team begins by reading a short article, listing facts, and separating evidence from guesses. Because the learner also mentioned ${interests}, the team looks for connections across subjects: how living things move, how bodies use energy, how stories explain discoveries, and how numbers help compare results. To test ideas, the team builds a prototype, which is an early model used to try a plan before trusting it. This makes the mission feel personal while still building serious reading and reasoning skills.</p>
+  return `<p>A learner who enjoys ${theme} can use that interest as a real investigation, not just a decoration on a worksheet. The research team begins by reading a short article, listing facts, and separating evidence from guesses. Because the learner also mentioned ${interests}, the team looks for connections across subjects: how living things move, how bodies use energy, how stories explain discoveries, and how numbers help compare results. To test ideas, the team builds a prototype, which is an early model used to try a plan before trusting it. This makes the mission feel personal while still building serious reading and reasoning skills.</p>
   <p>Good learners do not treat mistakes as the end of the mission. They treat mistakes as clues. If a reading answer is wrong, the learner can return to the passage and find the sentence that proves the right answer. If a math answer is wrong, the learner can check whether the error happened in the equation, the calculation, or the final label. If a pattern answer is wrong, the learner can compare each step instead of guessing. These habits build confidence because the learner knows what to do next.</p>
   <p>The strongest strategy is to slow down at the right moment. Fast work feels exciting, but careful work often wins. A student who underlines key words, circles numbers, and explains one reason will usually find more accurate answers. Over time, this kind of practice turns ${theme} from a fun interest into a training ground for reading comprehension, vocabulary, math reasoning, and logical thinking.</p>`;
 }
 
 function elementaryFallbackPassage(theme: string, interests: string): string {
   if (theme.toLowerCase().includes("space")) {
-    return `<p><strong>Original passage:</strong> A student research team is preparing a small rover for a pretend mission on a dusty moon. The rover is only a model, but the thinking is real. First, the team reads a short science article about moon dust. The article explains that tiny grains can stick to wheels, block tools, and make moving parts harder to turn. The team writes those facts in a notebook because good readers do not depend on memory alone; they collect evidence before they choose an answer.</p>
-    <p>Next, the team studies animals and anatomy for design ideas. A mountain goat can balance on narrow rocks, a lizard can grip rough surfaces, and a human knee bends so the leg can step over obstacles. These examples do not mean a rover is an animal. They help the team imagine a better prototype, which is an early model built to test an idea. The first prototype has smooth wheels, so it slides in the dust tray. The second prototype has ridges on the wheels, and it moves farther before getting stuck.</p>
+    const hasSoccer = interests.toLowerCase().includes("soccer");
+    const designParagraph = hasSoccer
+      ? "Next, the team studies a soccer ball rolling on grass and on sand. The ball moves farther on the smooth grass because less dust slows it down. That gives the team a new idea: maybe the rover wheels need ridges, like cleats, so they can grip the dusty ground. The team builds a prototype, which is an early model built to test an idea. The first prototype has smooth wheels, so it slides in the dust tray. The second prototype has ridges on the wheels, and it moves farther before getting stuck."
+      : "Next, the team studies familiar objects that move over different surfaces. A toy car rolls farther on a smooth floor than on a rug, and shoes with more grip can help someone stop without sliding. These examples give the team a new idea: maybe the rover wheels need ridges so they can grip the dusty ground. The team builds a prototype, which is an early model built to test an idea. The first prototype has smooth wheels, so it slides in the dust tray. The second prototype has ridges on the wheels, and it moves farther before getting stuck.";
+    const conclusionDetail = hasSoccer ? "soccer observations" : "real-world observations";
+    return `<p>A student research team is preparing a small rover for a pretend mission on a dusty moon. The rover is only a model, but the thinking is real. First, the team reads a short science article about moon dust. The article explains that tiny grains can stick to wheels, block tools, and make moving parts harder to turn. The team writes those facts in a notebook because good readers do not depend on memory alone; they collect evidence before they choose an answer.</p>
+    <p>${designParagraph}</p>
     <p>The team also uses math. In Trial 1, the rover travels 18 centimeters. In Trial 2, it travels 27 centimeters. In Trial 3, after the wheel ridges are made deeper, it travels 36 centimeters. The pattern shows improvement, but the team still has to be careful. Maybe the deeper ridges helped. Maybe the tray was flatter. Maybe the rover was pushed more gently. A strong scientist asks what changed, checks the evidence, and tests again.</p>
-    <p>At the end of the mission, the learner writes a short conclusion: reading gave the team facts, animal and anatomy observations gave the team design ideas, and math helped the team compare results. The rover did not work perfectly, but each test taught the team what to try next. That is why a mistake can be useful. It points the learner toward the next smart step.</p>`;
+    <p>At the end of the mission, the learner writes a short conclusion: reading gave the team facts, ${conclusionDetail} gave the team design ideas, and math helped the team compare results. The rover did not work perfectly, but each test taught the team what to try next. That is why a mistake can be useful. It points the learner toward the next smart step.</p>`;
   }
 
-  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} can turn that interest into a research mission. The first job is to read carefully. The learner looks for facts, marks important words, and writes down evidence instead of guessing. Because the learner also mentioned ${interests}, the mission can connect several subjects at once: reading, science, math, art, movement, and real-world problem solving.</p>
+  return `<p>A learner who enjoys ${theme} can turn that interest into a research mission. The first job is to read carefully. The learner looks for facts, marks important words, and writes down evidence instead of guessing. Because the learner also mentioned ${interests}, the mission can connect several subjects at once: reading, science, math, art, movement, and real-world problem solving.</p>
   <p>The team builds a small prototype, which means an early model used to test an idea. The first design does not work perfectly. That is useful information. The learner asks what changed, what stayed the same, and which detail from the notes explains the result. Then the learner improves the design and tests again. This is how readers, scientists, and inventors grow stronger.</p>
   <p>Math helps the team compare results. If one test lasts 12 minutes and the next lasts 18 minutes, the learner can measure the difference. If a pattern changes by the same amount each time, the learner can predict what may come next. The final conclusion should use evidence from the passage, numbers from the test, and one clear explanation. The goal is not to be perfect right away. The goal is to notice clues, explain thinking, and choose the next smart step.</p>`;
 }
@@ -1284,6 +1296,7 @@ function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): str
 }
 
 function mathAnswerFor(text: string): string | null {
+  if (/Mission Data table/i.test(text)) return "Full strategy had the best accuracy at 83 percent.";
   if (/4 sets of 6/i.test(text)) return "24 cards.";
   if (/3, 6, 12, 24/i.test(text)) return "48 and 96.";
   if (/12 pages/i.test(text)) return "27 pages.";
@@ -1296,6 +1309,7 @@ function mathAnswerFor(text: string): string | null {
 }
 
 function mathExplanationFor(text: string): string | null {
+  if (/Mission Data table/i.test(text)) return "Compare the Accuracy column: 68 percent, 77 percent, and 83 percent. The largest number is 83 percent.";
   if (/4 sets of 6/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
   if (/3, 6, 12, 24/i.test(text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
   if (/12 pages/i.test(text)) return "Add the two reading amounts: 12 + 15 = 27.";
@@ -1330,6 +1344,7 @@ function logicExplanationFor(text: string): string | null {
 function mathChoicesFor(question: { section: string; text: string }): string[] | null {
   if (question.section !== "Math Reasoning") return null;
   const text = question.text;
+  if (/Mission Data table/i.test(text)) return ["Quick review", "Evidence notes", "Full strategy", "They were all the same"];
   if (/4 sets of 6/i.test(text)) return ["18", "24", "10", "36"];
   if (/3, 6, 12, 24/i.test(text)) return ["36 and 48", "48 and 96", "30 and 36", "48 and 72"];
   if (/12 pages/i.test(text)) return ["25", "27", "3", "17"];
@@ -1385,8 +1400,9 @@ function fallbackQuestionBanks(args: {
   high: boolean;
   theme: string;
   vocabWords: string[][];
+  wantsData: boolean;
 }): Record<string, string[]> {
-  const { high, theme, vocabWords } = args;
+  const { high, theme, vocabWords, wantsData } = args;
 
   const reading = high
     ? [
@@ -1426,6 +1442,7 @@ function fallbackQuestionBanks(args: {
         "A data table shows study time rising from 20 to 50 minutes while accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?"
       ]
     : [
+        ...(wantsData ? ["Use the Mission Data table. Which practice plan had the best accuracy?"] : []),
         "A club makes 4 sets of 6 cards. How many cards are there?",
         "A pattern goes 3, 6, 12, 24. What are the next two numbers?",
         "A learner reads 12 pages on Monday and 15 pages on Tuesday. How many pages is that in all?",
@@ -1543,6 +1560,121 @@ function themeTitle(theme: string): string {
     .split(/\s+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
+}
+
+function learnerFriendlyMissionCopy(input: WorksheetInput, blueprint: LearningBlueprint): string {
+  const interests = cleanText(input.interests, 120);
+  const elementary = input.age <= 10;
+  const middle = input.age > 10 && input.age <= 14;
+
+  if (elementary) {
+    return `This mission uses ${interests} to practice reading clues, solving step by step, and feeling proud of careful thinking. Try your best, show your work, and enjoy the challenge.`;
+  }
+
+  if (middle) {
+    return `This mission uses ${interests} to build stronger reading, reasoning, and explanation habits. The goal is steady focus: use evidence, show the setup, and learn from each check.`;
+  }
+
+  return `This mission uses ${interests} as context for rigorous practice: evidence-based reading, precise vocabulary, quantitative reasoning, and clear explanations under test-like pressure. ${blueprint.motivationStrategy}`;
+}
+
+function blueprintWantsData(blueprint: LearningBlueprint, sections: WorksheetSection[]): boolean {
+  const planText = [
+    blueprint.curriculumPath,
+    blueprint.gradeExpectations,
+    blueprint.testReadinessPlan,
+    blueprint.visualPlan.join(" "),
+    blueprint.questionFormats.join(" "),
+    ...sections.flatMap((section) => [section.subject, section.focus, section.skills.join(" ")])
+  ].join(" ").toLowerCase();
+
+  return /\b(data|chart|graph|table|percent|statistics|trend|interpret)\b/.test(planText);
+}
+
+function dataSnapshotBlock(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint,
+  sections: WorksheetSection[]
+): string {
+  const high = input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
+  const middle = !high && input.age >= 11;
+  const wantsData = blueprintWantsData(blueprint, sections);
+
+  if (!wantsData) {
+    return "";
+  }
+
+  const theme = escapeHtml(input.interests.split(",")[0]?.trim() || "learning");
+  const title = high ? "Data Snapshot" : middle ? "Mission Data" : "Quick Number Clues";
+  const copy = high
+    ? "Read the labels first, compare numbers second, then write the conclusion last."
+    : middle
+      ? "Use the table to notice what changed, what stayed the same, and what the numbers suggest."
+      : `These quick ${theme} numbers are here only if your mission uses chart or table practice. Read one row at a time.`;
+
+  return `<h2>${title}</h2>
+  <article class="card">
+    <p class="label">Chart and data interpretation</p>
+    <p>${copy}</p>
+    <table class="mini-table">
+      <thead><tr><th>Practice plan</th><th>Minutes</th><th>Accuracy</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Quick review</td><td>20</td><td>68 percent</td><td>Fast but many missed details</td></tr>
+        <tr><td>Evidence notes</td><td>35</td><td>77 percent</td><td>Better reading proof</td></tr>
+        <tr><td>Full strategy</td><td>50</td><td>83 percent</td><td>Best accuracy, slower pace</td></tr>
+      </tbody>
+    </table>
+    <svg viewBox="0 0 260 70" role="img" aria-label="Low ink line chart">
+      <path d="M22 58h220M22 58V12"></path>
+      <path d="M40 44L125 33L210 24"></path>
+      <circle cx="40" cy="44" r="3"></circle><circle cx="125" cy="33" r="3"></circle><circle cx="210" cy="24" r="3"></circle>
+    </svg>
+  </article>`;
+}
+
+function strategyBlockFor(input: WorksheetInput, blueprint: LearningBlueprint): { title: string; html: string } {
+  const high = input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
+  const middle = !high && input.age >= 11;
+
+  if (high) {
+    return {
+      title: "Test Strategy Notes",
+      html: "<strong>Annotate passages:</strong> Mark the claim, shift word, and proof sentence. <strong>Eliminate carefully:</strong> Cross out choices that are extreme, reversed, unsupported, or only half true. <strong>Check math:</strong> List known numbers, write the equation, solve, and check units. <strong>Stay steady:</strong> Do the clearer questions first and return to the hardest one."
+    };
+  }
+
+  if (middle) {
+    return {
+      title: "Focus Moves",
+      html: "<strong>Read with proof:</strong> Underline the sentence that helps you answer. <strong>Show your setup:</strong> Write the numbers, rule, or diagram before solving. <strong>Explain one reason:</strong> A strong answer says why. <strong>Reset calmly:</strong> If a question feels tricky, breathe once and take the next small step."
+    };
+  }
+
+  const motivation = escapeHtml(blueprint.motivationStrategy || "Try one careful step at a time.");
+  return {
+    title: "Mission Moves",
+    html: `<strong>Start with clues:</strong> Underline one helpful word or number. <strong>Show your thinking:</strong> Draw, write, or circle before answering. <strong>Check one thing:</strong> Reread the question or redo the math. <strong>Keep going:</strong> ${motivation}`
+  };
+}
+
+function watchOutFor(section: string, high: boolean): string {
+  if (section === "Reading Comprehension") return high ? "Answers that sound smart but are not proven by the text." : "Guessing from memory instead of pointing to a sentence.";
+  if (section === "Vocabulary in Context") return "Using the word without showing what it means.";
+  if (section === "Grammar and Writing") return "Fixing one part of the sentence while leaving another part unclear.";
+  if (section === "Math Reasoning") return "Doing the calculation before writing what the problem is asking.";
+  if (section === "Science Investigation") return "Calling one better result proof before checking what else changed.";
+  if (section === "Social Studies and History") return "Choosing the simplest cause without checking evidence from more than one side.";
+  return "Stopping at the answer without explaining the rule or reason.";
+}
+
+function nextTimeTipFor(section: string, high: boolean): string {
+  if (section === "Reading Comprehension") return "Underline the proof sentence before writing your answer.";
+  if (section === "Vocabulary in Context") return "Try replacing the word with a simpler word and see if the sentence still works.";
+  if (section === "Grammar and Writing") return "Read the sentence aloud after you fix it.";
+  if (section === "Math Reasoning") return "Write the setup first, then solve and check the units.";
+  if (section === "Science Investigation") return "Name what changed, what stayed the same, and what evidence you saw.";
+  if (section === "Social Studies and History") return "Give one reason and one piece of evidence.";
+  return high ? "State the rule, then test it against the evidence." : "Say the rule in your own words.";
 }
 
 // ---------------------------------------------------------------------------

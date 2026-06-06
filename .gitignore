@@ -10,3 +10,8 @@ pnpm-debug.log*
 dist
 coverage
 tsconfig.tsbuildinfo
+
+# Private SSH key for Oracle Cloud box (never commit)
+oracle-ssh-key.pem
+*.pem
+*.key
