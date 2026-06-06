@@ -863,7 +863,16 @@ function assembleWorksheet(
         ["compare", "to tell how things are alike and different", "Compare the two patterns.", "Compare means check side by side."],
         ["predict", "to make a smart guess using clues", "Predict the next number.", "Predict means think ahead."]
       ];
-  const vocabWords = content.vocab?.length ? content.vocab : bankVocab;
+  // Use AI vocabulary when present, but top up from the bank so there are always enough
+  // cards (a thin AI vocab list otherwise leaves the worksheet with too few words).
+  const minVocab = qualityProfileFor(input).minVocabularyCards;
+  const vocabWords = content.vocab?.length ? [...content.vocab] : [...bankVocab];
+  for (const bankWord of bankVocab) {
+    if (vocabWords.length >= minVocab) break;
+    if (!vocabWords.some((v) => v[0].toLowerCase() === bankWord[0].toLowerCase())) {
+      vocabWords.push(bankWord);
+    }
+  }
 
   // Theme-aware question banks, one per canonical subject.
   const banks = fallbackQuestionBanks({ high, theme, vocabWords });
