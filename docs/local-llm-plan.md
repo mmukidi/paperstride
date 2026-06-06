@@ -6,6 +6,43 @@ Self-contained handoff. Goal: replace the rate-limited Groq free tier with a
 
 ---
 
+## 0. STATUS — LOCAL LLM IS LIVE ✅ (updated)
+
+Ollama is installed and wired into production. Worksheets now generate from the
+**self-hosted model with no token limits**.
+
+- ✅ Instance resized to 4 OCPU / 24 GB; 8 GB swap added.
+- ✅ Ollama 0.30.6 installed (ARM64, CPU-only), `OLLAMA_HOST=0.0.0.0`,
+  `OLLAMA_KEEP_ALIVE=-1`.
+- ✅ Models pulled: `qwen2.5:7b-instruct` (4.7 GB) and `llama3.2:3b` (2.0 GB).
+- ✅ **Benchmark (4 cores, CPU):** qwen2.5:7b ≈ **6 tok/s**, llama3.2:3b ≈ **12 tok/s**.
+- ✅ App backend is configurable (`LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY`/`LLM_TIMEOUT_MS`);
+  `docker-compose.yml` points `web` at host Ollama via `host.docker.internal`.
+- ✅ **GOTCHA fixed:** ufw blocked the Docker bridge → host:11434. Required rule (already applied):
+  `sudo ufw allow from 172.16.0.0/12 to any port 11434 proto tcp`
+- ✅ Verified live: real AI chess passage + chess-themed math generated. End-to-end
+  **~2:52 min** for a Grade-4 worksheet on `llama3.2:3b`.
+- ✅ Vocab top-up fix (thin AI vocab now padded from bank to the grade minimum).
+
+Current production model: **`llama3.2:3b`** (chosen for speed). To switch to higher
+quality `qwen2.5:7b-instruct` (slower, ~2x), set `LLM_MODEL` and redeploy:
+```bash
+ssh -i ./oracle-ssh-key.pem ubuntu@129.80.57.54
+cd ~/paperstride && LLM_MODEL=qwen2.5:7b-instruct docker compose up -d
+# (or edit the LLM_MODEL default in docker-compose.yml and rebuild)
+```
+
+SSH key now lives in the repo as `oracle-ssh-key.pem` (git-ignored). Use it:
+`ssh -i ./oracle-ssh-key.pem ubuntu@129.80.57.54`
+
+### Still open (next session)
+- **Latency/UX (Section 5):** ~3 min synchronous is slow. Decide selective generation
+  (LLM passage only, bank-fill rest → ~1 min) vs background/async generation.
+- **Model choice:** A/B `llama3.2:3b` vs `qwen2.5:7b-instruct` on real worksheets.
+- Quality polish: math/other sections sometimes mix AI + bank when the model under-delivers.
+
+---
+
 ## 1. Where things stand (done)
 
 - App = Next.js worksheet generator ("paperstride") deployed on Oracle Cloud via
