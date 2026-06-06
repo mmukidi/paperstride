@@ -948,7 +948,11 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
   const middle = !high && input.age >= 11;
   const profile = qualityProfileFor(input);
   const targetQuestionCount = Math.max(profile.minQuestions, blueprint.questionCount || profile.minQuestions);
-  const passage = high ? highSchoolFallbackPassage(theme) : middle ? middleSchoolFallbackPassage(theme) : elementaryFallbackPassage(theme);
+  const passage = high
+    ? highSchoolFallbackPassage(theme)
+    : middle
+      ? middleSchoolFallbackPassage(theme, allInterests)
+      : elementaryFallbackPassage(theme, allInterests);
   const readingQuestions = high
     ? [
         "Which statement best captures the central claim of the passage?",
@@ -959,11 +963,11 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
         "How does the final paragraph refine the argument made earlier in the passage?"
       ]
     : [
-        "What is the main idea of the passage?",
-        "Which detail best supports the main idea?",
-        "What does the word strategy mean in the passage?",
-        "How does the learner solve a hard problem?",
-        "What lesson can you use in your own learning?"
+        `What is the main idea of the ${theme} research passage?`,
+        "Which detail from the passage best shows that evidence matters?",
+        "What does the word prototype mean as it is used in the passage?",
+        `How do the learner's interests help the ${theme} mission?`,
+        "What should the team do after a test does not work the first time?"
       ];
   const vocabWords = high
     ? [
@@ -1051,8 +1055,8 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
     .map(
       (question) => `<article class="answer" data-answer="true">
         <h3>Q${question.number}. ${escapeHtml(question.section)}</h3>
-        <p><strong>Correct answer:</strong> Teacher check or sample response. The response should directly answer: ${escapeHtml(question.text)}</p>
-        <p><strong>Why it is right:</strong> A strong answer uses the passage, table, pattern, or calculation instead of guessing from memory.</p>
+        <p><strong>Correct answer:</strong> ${fallbackAnswerFor(question, theme)}</p>
+        <p><strong>Why it is right:</strong> ${fallbackExplanationFor(question, theme)}</p>
         <p><strong>Common wrong or trap answer:</strong> A plausible answer may sound reasonable but fail because it ignores a key word, skips evidence, or uses only part of the data.</p>
         <p><strong>Skill being tested:</strong> ${escapeHtml(question.section)}. <strong>Tip:</strong> Circle the command word, prove your answer, and check one possible wrong answer before moving on.</p>
       </article>`
@@ -1192,15 +1196,76 @@ function highSchoolFallbackPassage(theme: string): string {
   <p>The same approach can guide a student who cares about ${theme}. Interest creates energy, but strategy turns energy into progress. A learner might begin with excitement, then calibrate the challenge: not so easy that practice becomes automatic, not so hard that effort becomes random. The best practice sits in the stretch zone, where a mistake gives information and a correct answer can be explained. In that zone, reading comprehension, mathematical reasoning, and creative problem solving become connected. The student is not just finishing a worksheet; the student is learning how to think under pressure and how to defend a choice with clear evidence.</p>`;
 }
 
-function middleSchoolFallbackPassage(theme: string): string {
-  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} already has a useful learning tool: curiosity. Curiosity helps people notice details, ask questions, and keep going when a challenge is not solved immediately. Imagine a student studying a new strategy. First, the student observes what is happening. Next, the student makes a plan. Then the student tests the plan and checks the result. This is similar to how scientists, readers, athletes, artists, and engineers improve.</p>
+function middleSchoolFallbackPassage(theme: string, interests: string): string {
+  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} can use that interest as a real investigation, not just a decoration on a worksheet. The research team begins by reading a short article, listing facts, and separating evidence from guesses. Because the learner also mentioned ${interests}, the team looks for connections across subjects: how living things move, how bodies use energy, how stories explain discoveries, and how numbers help compare results. This makes the mission feel personal while still building serious reading and reasoning skills.</p>
   <p>Good learners do not treat mistakes as the end of the mission. They treat mistakes as clues. If a reading answer is wrong, the learner can return to the passage and find the sentence that proves the right answer. If a math answer is wrong, the learner can check whether the error happened in the equation, the calculation, or the final label. If a pattern answer is wrong, the learner can compare each step instead of guessing. These habits build confidence because the learner knows what to do next.</p>
   <p>The strongest strategy is to slow down at the right moment. Fast work feels exciting, but careful work often wins. A student who underlines key words, circles numbers, and explains one reason will usually find more accurate answers. Over time, this kind of practice turns ${theme} from a fun interest into a training ground for reading comprehension, vocabulary, math reasoning, and logical thinking.</p>`;
 }
 
-function elementaryFallbackPassage(theme: string): string {
-  return `<p><strong>Original passage:</strong> Learning can feel like a mission. When a student enjoys ${theme}, that interest can make practice more exciting. The student can read a short story, find clues, solve number puzzles, and explain ideas. A strong learner does not rush through every problem. A strong learner looks carefully, tries a plan, checks the answer, and learns from mistakes.</p>
-  <p>Sometimes a problem feels tricky at first. That is normal. A reader can go back to the sentence with the clue. A math thinker can draw a picture or write the numbers in order. A scientist can observe what changes and what stays the same. Each small step helps the brain grow stronger. The goal is not to be perfect on the first try. The goal is to keep thinking and keep improving.</p>`;
+function elementaryFallbackPassage(theme: string, interests: string): string {
+  if (theme.toLowerCase().includes("space")) {
+    return `<p><strong>Original passage:</strong> A student research team is preparing a small rover for a pretend mission on a dusty moon. The rover is only a model, but the thinking is real. First, the team reads a short science article about moon dust. The article explains that tiny grains can stick to wheels, block tools, and make moving parts harder to turn. The team writes those facts in a notebook because good readers do not depend on memory alone; they collect evidence before they choose an answer.</p>
+    <p>Next, the team studies animals and anatomy for design ideas. A mountain goat can balance on narrow rocks, a lizard can grip rough surfaces, and a human knee bends so the leg can step over obstacles. These examples do not mean a rover is an animal. They help the team imagine a better prototype, which is an early model built to test an idea. The first prototype has smooth wheels, so it slides in the dust tray. The second prototype has ridges on the wheels, and it moves farther before getting stuck.</p>
+    <p>The team also uses math. In Trial 1, the rover travels 18 centimeters. In Trial 2, it travels 27 centimeters. In Trial 3, after the wheel ridges are made deeper, it travels 36 centimeters. The pattern shows improvement, but the team still has to be careful. Maybe the deeper ridges helped. Maybe the tray was flatter. Maybe the rover was pushed more gently. A strong scientist asks what changed, checks the evidence, and tests again.</p>
+    <p>At the end of the mission, the learner writes a short conclusion: reading gave the team facts, animal and anatomy observations gave the team design ideas, and math helped the team compare results. The rover did not work perfectly, but each test taught the team what to try next. That is why a mistake can be useful. It points the learner toward the next smart step.</p>`;
+  }
+
+  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} can turn that interest into a research mission. The first job is to read carefully. The learner looks for facts, marks important words, and writes down evidence instead of guessing. Because the learner also mentioned ${interests}, the mission can connect several subjects at once: reading, science, math, art, movement, and real-world problem solving.</p>
+  <p>The team builds a small prototype, which means an early model used to test an idea. The first design does not work perfectly. That is useful information. The learner asks what changed, what stayed the same, and which detail from the notes explains the result. Then the learner improves the design and tests again. This is how readers, scientists, and inventors grow stronger.</p>
+  <p>Math helps the team compare results. If one test lasts 12 minutes and the next lasts 18 minutes, the learner can measure the difference. If a pattern changes by the same amount each time, the learner can predict what may come next. The final conclusion should use evidence from the passage, numbers from the test, and one clear explanation. The goal is not to be perfect right away. The goal is to notice clues, explain thinking, and choose the next smart step.</p>`;
+}
+
+function fallbackAnswerFor(
+  question: { section: string; text: string; number: number },
+  theme: string
+): string {
+  if (question.section === "Reading Comprehension") {
+    const answers = [
+      `The main idea is that a ${theme} mission can use reading, evidence, design, and math to solve a problem.`,
+      "A strong detail is that the team writes moon-dust facts in a notebook before choosing an answer, or that the rover test results are compared with numbers.",
+      "Prototype means an early model built to test an idea.",
+      `The interests help by giving the team design ideas, science connections, and motivation for the ${theme} mission.`,
+      "The team should study what changed, use evidence, improve the design, and test again."
+    ];
+    return escapeHtml(answers[question.number - 1] || "Use evidence from the passage and explain the answer in your own words.");
+  }
+
+  if (question.section === "Math Reasoning") {
+    if (/4 sets of 6/i.test(question.text)) return "24 cards.";
+    if (/3, 6, 12, 24/i.test(question.text)) return "48 and 96.";
+    if (/12 pages/i.test(question.text)) return "27 pages.";
+    if (/30 minutes/i.test(question.text)) return "6 minutes per mission.";
+  }
+
+  if (question.section === "Vocabulary in Context") {
+    return "A complete sentence that uses the vocabulary word correctly and connects it to the mission theme.";
+  }
+
+  return "A strong response explains the claim, includes evidence, and shows the reasoning step by step.";
+}
+
+function fallbackExplanationFor(
+  question: { section: string; text: string; number: number },
+  theme: string
+): string {
+  if (question.section === "Reading Comprehension") {
+    return escapeHtml(
+      `The answer must match the ${theme} passage, not a guess from outside knowledge. The passage connects facts, testing, evidence, and improvement.`
+    );
+  }
+
+  if (question.section === "Math Reasoning") {
+    if (/4 sets of 6/i.test(question.text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
+    if (/3, 6, 12, 24/i.test(question.text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
+    if (/12 pages/i.test(question.text)) return "Add the two reading amounts: 12 + 15 = 27.";
+    if (/30 minutes/i.test(question.text)) return "Divide the total time by the number of missions: 30 / 5 = 6.";
+  }
+
+  if (question.section === "Vocabulary in Context") {
+    return "The sentence should prove the learner understands the word, not just copy it. A good sentence gives context clues.";
+  }
+
+  return "A strong answer uses a detail, number, pattern, or passage clue and explains why that evidence supports the conclusion.";
 }
 
 function parseJsonContent(content: string): unknown {
