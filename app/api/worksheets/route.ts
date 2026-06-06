@@ -127,41 +127,82 @@ async function parseInput(request: NextRequest): Promise<WorksheetInput> {
 async function createHtmlWorksheetWithGroq(input: WorksheetInput): Promise<string> {
   const blueprint = await createLearningBlueprint(input);
   const rawHtml = await createWorksheetHtml(input, blueprint);
-  const validated = validateWorksheetHtml(rawHtml, input, blueprint);
 
-  if (validated.ok) {
-    return injectNickname(validated.html, input.childName);
+  // Hard safety gate first. Unsafe or malformed HTML must never reach the learner.
+  const safety = validateStaticHtml(rawHtml);
+
+  if (safety.ok) {
+    const quality = validateHtmlQuality(safety.html, input, blueprint);
+
+    if (quality.ok) {
+      return injectNickname(safety.html, input.childName);
+    }
+
+    // The AI produced a safe, on-theme worksheet that is merely shorter than our
+    // ideal target. A real personalized worksheet beats a generic template, so we
+    // keep it as long as it is structurally complete (passage, questions, answers,
+    // vocabulary). Discarding it for length is what produced the generic fallback.
+    if (aiOutputIsKeepable(safety.html, input, blueprint)) {
+      console.warn("AI worksheet below ideal target but structurally complete; keeping it", quality.reason);
+      return injectNickname(safety.html, input.childName);
+    }
+
+    console.warn("AI worksheet too thin to keep; attempting one repair", quality.reason);
+  } else {
+    console.warn("AI worksheet failed safety/structure validation; attempting one repair", safety.reason);
   }
 
-  console.warn("Generated worksheet failed validation", validated.reason);
-  if (shouldUseFallbackForValidation(validated.reason)) {
-    console.warn("Using quality fallback workbook instead of retrying thin AI output");
-    return createFallbackHtmlWorksheet(input, blueprint);
-  }
+  const reason = safety.ok ? "Workbook was structurally incomplete or far too thin." : safety.reason;
 
   let repairedHtml: string;
 
   try {
-    repairedHtml = await repairWorksheetHtml(input, blueprint, rawHtml, validated.reason);
+    repairedHtml = await repairWorksheetHtml(input, blueprint, rawHtml, reason);
   } catch (error) {
     console.warn("Worksheet repair failed; using quality fallback", error);
     return createFallbackHtmlWorksheet(input, blueprint);
   }
 
-  const repaired = validateWorksheetHtml(repairedHtml, input, blueprint);
+  const repairedSafety = validateStaticHtml(repairedHtml);
 
-  if (!repaired.ok) {
-    console.warn("Repaired worksheet failed validation; using quality fallback", repaired.reason);
-    return createFallbackHtmlWorksheet(input, blueprint);
+  if (repairedSafety.ok && aiOutputIsKeepable(repairedSafety.html, input, blueprint)) {
+    return injectNickname(repairedSafety.html, input.childName);
   }
 
-  return injectNickname(repaired.html, input.childName);
+  console.warn("Repaired worksheet still unusable; using quality fallback");
+  return createFallbackHtmlWorksheet(input, blueprint);
+}
+
+// A worksheet is "keepable" when it is structurally complete, even if it is shorter
+// than the aspirational quality target. We require the core sections to exist at
+// roughly 60% of the ideal thresholds, with sensible absolute floors.
+function aiOutputIsKeepable(
+  html: string,
+  input: WorksheetInput,
+  blueprint: LearningBlueprint
+): boolean {
+  const profile = qualityProfileFor(input);
+  const targetQuestionCount = Math.min(
+    24,
+    Math.max(profile.minQuestions, Math.floor(blueprint.questionCount || 0))
+  );
+  const keepRatio = 0.6;
+  const studentText = stripHtml(html).split(/answer sheet/i)[0] || "";
+
+  return (
+    html.length >= Math.max(6000, Math.floor(profile.minHtmlCharacters * keepRatio)) &&
+    wordCount(studentText) >= Math.floor(profile.minStudentWords * keepRatio) &&
+    countRequiredMarker(html, "data-question") >= Math.max(6, Math.floor(targetQuestionCount * keepRatio)) &&
+    countRequiredMarker(html, "data-answer") >= Math.max(5, Math.floor(targetQuestionCount * keepRatio)) &&
+    countRequiredMarker(html, "data-vocab") >= Math.max(3, Math.floor(profile.minVocabularyCards * keepRatio)) &&
+    wordCount(extractMarkedText(html, "data-reading-passage")) >= Math.floor(profile.minReadingWords * keepRatio)
+  );
 }
 
 async function createLearningBlueprint(input: WorksheetInput): Promise<LearningBlueprint> {
   const content = await groqChat({
     temperature: 0.35,
-    maxTokens: 1800,
+    maxTokens: 900,
     responseFormat: "json_object",
     messages: [
       {
@@ -219,7 +260,7 @@ async function createWorksheetHtml(
 ): Promise<string> {
   return groqChat({
     temperature: 0.48,
-    maxTokens: 7000,
+    maxTokens: 5000,
     messages: [
       {
         role: "system",
@@ -242,7 +283,7 @@ async function repairWorksheetHtml(
 ): Promise<string> {
   return groqChat({
     temperature: 0.15,
-    maxTokens: 7000,
+    maxTokens: 5000,
     messages: [
       {
         role: "system",
@@ -535,12 +576,6 @@ Required structure:
 Do not stop after a small sample. If the response is getting long, reduce decoration first, but keep the full reading passage, all questions, all vocabulary cards, and the full answer sheet.`;
 }
 
-function shouldUseFallbackForValidation(reason: string): boolean {
-  return /too short|too thin|too few|reading passage|vocabulary cards|rigor signal|answer sheet|skill being tested|tip or trick/i.test(
-    reason
-  );
-}
-
 function createFallbackHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
   return injectNickname(createSampleHtmlWorksheet(input, blueprint), input.childName);
 }
@@ -632,26 +667,6 @@ function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
       ? "Use direct SAT-style reading, math reasoning, elimination, evidence, and trap-answer thinking."
       : "Use future test skill language with evidence, careful reading, logic, and checking work."
   };
-}
-
-function validateWorksheetHtml(
-  content: string,
-  input: WorksheetInput,
-  blueprint: LearningBlueprint
-): { ok: true; html: string } | { ok: false; reason: string } {
-  const staticValidation = validateStaticHtml(content);
-
-  if (!staticValidation.ok) {
-    return staticValidation;
-  }
-
-  const qualityValidation = validateHtmlQuality(staticValidation.html, input, blueprint);
-
-  if (!qualityValidation.ok) {
-    return qualityValidation;
-  }
-
-  return staticValidation;
 }
 
 function validateStaticHtml(content: string): { ok: true; html: string } | { ok: false; reason: string } {
@@ -803,10 +818,10 @@ function validateHtmlQuality(
 function qualityProfileFor(input: WorksheetInput) {
   if (input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten") {
     return {
-      minHtmlCharacters: 9000,
-      minStudentWords: 550,
+      minHtmlCharacters: 7000,
+      minStudentWords: 450,
       minQuestions: 8,
-      minReadingWords: 70,
+      minReadingWords: 60,
       minVocabularyCards: 3,
       requiredTerms: ["answer sheet", "smart test strategies"]
     };
@@ -814,10 +829,10 @@ function qualityProfileFor(input: WorksheetInput) {
 
   if (input.age <= 10) {
     return {
-      minHtmlCharacters: 13000,
-      minStudentWords: 900,
+      minHtmlCharacters: 10000,
+      minStudentWords: 700,
       minQuestions: input.age <= 8 ? 10 : 12,
-      minReadingWords: input.age <= 8 ? 150 : 250,
+      minReadingWords: input.age <= 8 ? 130 : 200,
       minVocabularyCards: input.age <= 8 ? 4 : 5,
       requiredTerms: ["reading comprehension", "vocabulary", "math reasoning", "answer sheet"]
     };
@@ -825,10 +840,10 @@ function qualityProfileFor(input: WorksheetInput) {
 
   if (input.age <= 14) {
     return {
-      minHtmlCharacters: 18000,
-      minStudentWords: 1300,
+      minHtmlCharacters: 13000,
+      minStudentWords: 950,
       minQuestions: 16,
-      minReadingWords: 400,
+      minReadingWords: 320,
       minVocabularyCards: 6,
       requiredTerms: [
         "reading comprehension",
@@ -842,10 +857,10 @@ function qualityProfileFor(input: WorksheetInput) {
   }
 
   return {
-    minHtmlCharacters: 24000,
-    minStudentWords: 1800,
+    minHtmlCharacters: 17000,
+    minStudentWords: 1300,
     minQuestions: 18,
-    minReadingWords: 600,
+    minReadingWords: 480,
     minVocabularyCards: 8,
     requiredTerms: [
       "sat",
@@ -948,6 +963,8 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
   const middle = !high && input.age >= 11;
   const profile = qualityProfileFor(input);
   const targetQuestionCount = Math.max(profile.minQuestions, blueprint.questionCount || profile.minQuestions);
+  const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
+  const answerContext = { high, isSpace: isSpaceTheme };
   const passage = high
     ? highSchoolFallbackPassage(theme)
     : middle
@@ -1032,10 +1049,17 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
     }))
   ].slice(0, Math.max(targetQuestionCount, high ? 22 : middle ? 18 : 12));
 
+  const stretchPrompts = [
+    `Explain one way ${theme} can build careful reading and evidence habits.`,
+    `Write a short plan to get better at ${theme} using practice and feedback.`,
+    `Compare two strategies a ${theme} learner could use, and say which is stronger and why.`,
+    `Describe one mistake a ${theme} learner might make, and how to fix it using evidence.`,
+    `Set one measurable ${theme} goal and explain how you would check progress with numbers.`
+  ];
   while (allQuestions.length < targetQuestionCount) {
     allQuestions.push({
       section: "Stretch Challenge",
-      text: `Create one careful explanation that connects ${theme} to reading evidence, math reasoning, or strategy.`,
+      text: stretchPrompts[allQuestions.length % stretchPrompts.length],
       number: allQuestions.length + 1
     });
   }
@@ -1045,9 +1069,9 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
       (question) => `<article class="card question" data-question="true">
         <p class="label">Q${question.number} | ${escapeHtml(question.section)}</p>
         <h3>${escapeHtml(question.text)}</h3>
-        <p class="choice-line">A. Strongly supported by evidence &nbsp; B. Partly true but incomplete &nbsp; C. Trap answer &nbsp; D. Not supported</p>
+        ${fallbackChoiceLine(question)}
         <div class="write"></div>
-        <p class="hint">Explain your thinking. For SAT-style practice, name the clue or equation that proves your answer.</p>
+        <p class="hint">${escapeHtml(questionHintFor(question))}</p>
       </article>`
     )
     .join("");
@@ -1055,8 +1079,8 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
     .map(
       (question) => `<article class="answer" data-answer="true">
         <h3>Q${question.number}. ${escapeHtml(question.section)}</h3>
-        <p><strong>Correct answer:</strong> ${fallbackAnswerFor(question, theme)}</p>
-        <p><strong>Why it is right:</strong> ${fallbackExplanationFor(question, theme)}</p>
+        <p><strong>Correct answer:</strong> ${fallbackAnswerFor(question, theme, answerContext)}</p>
+        <p><strong>Why it is right:</strong> ${fallbackExplanationFor(question, theme, answerContext)}</p>
         <p><strong>Common wrong or trap answer:</strong> A plausible answer may sound reasonable but fail because it ignores a key word, skips evidence, or uses only part of the data.</p>
         <p><strong>Skill being tested:</strong> ${escapeHtml(question.section)}. <strong>Tip:</strong> Circle the command word, prove your answer, and check one possible wrong answer before moving on.</p>
       </article>`
@@ -1197,7 +1221,7 @@ function highSchoolFallbackPassage(theme: string): string {
 }
 
 function middleSchoolFallbackPassage(theme: string, interests: string): string {
-  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} can use that interest as a real investigation, not just a decoration on a worksheet. The research team begins by reading a short article, listing facts, and separating evidence from guesses. Because the learner also mentioned ${interests}, the team looks for connections across subjects: how living things move, how bodies use energy, how stories explain discoveries, and how numbers help compare results. This makes the mission feel personal while still building serious reading and reasoning skills.</p>
+  return `<p><strong>Original passage:</strong> A learner who enjoys ${theme} can use that interest as a real investigation, not just a decoration on a worksheet. The research team begins by reading a short article, listing facts, and separating evidence from guesses. Because the learner also mentioned ${interests}, the team looks for connections across subjects: how living things move, how bodies use energy, how stories explain discoveries, and how numbers help compare results. To test ideas, the team builds a prototype, which is an early model used to try a plan before trusting it. This makes the mission feel personal while still building serious reading and reasoning skills.</p>
   <p>Good learners do not treat mistakes as the end of the mission. They treat mistakes as clues. If a reading answer is wrong, the learner can return to the passage and find the sentence that proves the right answer. If a math answer is wrong, the learner can check whether the error happened in the equation, the calculation, or the final label. If a pattern answer is wrong, the learner can compare each step instead of guessing. These habits build confidence because the learner knows what to do next.</p>
   <p>The strongest strategy is to slow down at the right moment. Fast work feels exciting, but careful work often wins. A student who underlines key words, circles numbers, and explains one reason will usually find more accurate answers. Over time, this kind of practice turns ${theme} from a fun interest into a training ground for reading comprehension, vocabulary, math reasoning, and logical thinking.</p>`;
 }
@@ -1215,30 +1239,29 @@ function elementaryFallbackPassage(theme: string, interests: string): string {
   <p>Math helps the team compare results. If one test lasts 12 minutes and the next lasts 18 minutes, the learner can measure the difference. If a pattern changes by the same amount each time, the learner can predict what may come next. The final conclusion should use evidence from the passage, numbers from the test, and one clear explanation. The goal is not to be perfect right away. The goal is to notice clues, explain thinking, and choose the next smart step.</p>`;
 }
 
+type AnswerContext = { high: boolean; isSpace: boolean };
+
 function fallbackAnswerFor(
   question: { section: string; text: string; number: number },
-  theme: string
+  theme: string,
+  ctx: AnswerContext
 ): string {
   if (question.section === "Reading Comprehension") {
-    const answers = [
-      `The main idea is that a ${theme} mission can use reading, evidence, design, and math to solve a problem.`,
-      "A strong detail is that the team writes moon-dust facts in a notebook before choosing an answer, or that the rover test results are compared with numbers.",
-      "Prototype means an early model built to test an idea.",
-      `The interests help by giving the team design ideas, science connections, and motivation for the ${theme} mission.`,
-      "The team should study what changed, use evidence, improve the design, and test again."
-    ];
-    return escapeHtml(answers[question.number - 1] || "Use evidence from the passage and explain the answer in your own words.");
+    return escapeHtml(readingAnswerFor(question.number, theme, ctx));
   }
 
   if (question.section === "Math Reasoning") {
-    if (/4 sets of 6/i.test(question.text)) return "24 cards.";
-    if (/3, 6, 12, 24/i.test(question.text)) return "48 and 96.";
-    if (/12 pages/i.test(question.text)) return "27 pages.";
-    if (/30 minutes/i.test(question.text)) return "6 minutes per mission.";
+    const answer = mathAnswerFor(question.text);
+    if (answer) return escapeHtml(answer);
   }
 
   if (question.section === "Vocabulary in Context") {
     return "A complete sentence that uses the vocabulary word correctly and connects it to the mission theme.";
+  }
+
+  if (question.section === "Logic and Real-World Thinking") {
+    const answer = logicAnswerFor(question.text);
+    if (answer) return escapeHtml(answer);
   }
 
   return "A strong response explains the claim, includes evidence, and shows the reasoning step by step.";
@@ -1246,26 +1269,137 @@ function fallbackAnswerFor(
 
 function fallbackExplanationFor(
   question: { section: string; text: string; number: number },
-  theme: string
+  theme: string,
+  ctx: AnswerContext
 ): string {
   if (question.section === "Reading Comprehension") {
     return escapeHtml(
-      `The answer must match the ${theme} passage, not a guess from outside knowledge. The passage connects facts, testing, evidence, and improvement.`
+      ctx.high
+        ? "The answer must come from the passages, not outside knowledge. Strong readers point to the exact sentence that proves the choice."
+        : `The answer must come from the ${theme} passage, not a guess from outside knowledge. The passage connects facts, testing, evidence, and improvement.`
     );
   }
 
   if (question.section === "Math Reasoning") {
-    if (/4 sets of 6/i.test(question.text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
-    if (/3, 6, 12, 24/i.test(question.text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
-    if (/12 pages/i.test(question.text)) return "Add the two reading amounts: 12 + 15 = 27.";
-    if (/30 minutes/i.test(question.text)) return "Divide the total time by the number of missions: 30 / 5 = 6.";
+    const explanation = mathExplanationFor(question.text);
+    if (explanation) return escapeHtml(explanation);
   }
 
   if (question.section === "Vocabulary in Context") {
     return "The sentence should prove the learner understands the word, not just copy it. A good sentence gives context clues.";
   }
 
+  if (question.section === "Logic and Real-World Thinking") {
+    const explanation = logicExplanationFor(question.text);
+    if (explanation) return escapeHtml(explanation);
+  }
+
   return "A strong answer uses a detail, number, pattern, or passage clue and explains why that evidence supports the conclusion.";
+}
+
+function readingAnswerFor(number: number, theme: string, ctx: AnswerContext): string {
+  if (ctx.high) {
+    const answers = [
+      "The central claim is that improvement comes from feedback specific enough to change the next attempt; tools can speed feedback but cannot replace human judgment.",
+      "The strongest evidence is the point that a device can show a student answered quickly but cannot tell whether the student truly understood the passage.",
+      "As used here, disciplined most nearly means self-controlled and steady, treating mistakes as useful evidence rather than as failure.",
+      "The basketball example shows that vague feedback like shoot better gives no guidance, while specific feedback that can be tested actually helps.",
+      "A trap answer credits a single hero, talent, or invention as the only cause; it sounds reasonable but the passage argues against single-cause explanations.",
+      "The final paragraph refines the argument by applying it to the reader's own interest: interest supplies energy, but strategy in the stretch zone turns it into progress."
+    ];
+    return answers[number - 1] || "Answer from the passage and point to the sentence that proves it.";
+  }
+
+  const spaceAnswers = [
+    `The main idea is that a ${theme} mission improves by combining careful reading, evidence, design changes, and math instead of guessing.`,
+    "A strong detail is that the team writes the moon-dust facts in a notebook before choosing an answer, and later compares the rover trial distances with numbers.",
+    "Prototype means an early model built to test an idea.",
+    `The interests help by giving the team design ideas from animals and anatomy, plus motivation for the ${theme} mission.`,
+    "After a test fails, the team should ask what changed, check the evidence, improve the design, and test again."
+  ];
+  const genericAnswers = [
+    `The main idea is that an interest like ${theme} can become a real research mission built on reading, evidence, testing, and math.`,
+    "A strong detail is that the learner writes down evidence instead of guessing, and checks what changed between one test and the next.",
+    "Prototype means an early model used to test an idea before trusting it.",
+    `The interests help by connecting several subjects at once and giving the ${theme} mission a clear, motivating purpose.`,
+    "After a test does not work, the learner should study what changed, use the evidence, improve the design, and try again."
+  ];
+  const answers = ctx.isSpace ? spaceAnswers : genericAnswers;
+  return answers[number - 1] || "Use evidence from the passage and explain the answer in your own words.";
+}
+
+function mathAnswerFor(text: string): string | null {
+  if (/4 sets of 6/i.test(text)) return "24 cards.";
+  if (/3, 6, 12, 24/i.test(text)) return "48 and 96.";
+  if (/12 pages/i.test(text)) return "27 pages.";
+  if (/30 minutes/i.test(text)) return "6 minutes per mission.";
+  if (/42 of 60/i.test(text)) return "85 percent.";
+  if (/budget of \$360/i.test(text)) return "9 panels.";
+  if (/f\(x\) = 3x \+ 7/i.test(text)) return "x = 15.";
+  if (/study time rising from 20 to 50/i.test(text)) return "5 percentage points per 10 minutes.";
+  return null;
+}
+
+function mathExplanationFor(text: string): string | null {
+  if (/4 sets of 6/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
+  if (/3, 6, 12, 24/i.test(text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
+  if (/12 pages/i.test(text)) return "Add the two reading amounts: 12 + 15 = 27.";
+  if (/30 minutes/i.test(text)) return "Divide the total time by the number of missions: 30 / 5 = 6.";
+  if (/42 of 60/i.test(text)) return "42 of 60 is 70 percent; adding 15 percentage points gives 85 percent.";
+  if (/budget of \$360/i.test(text)) return "8 sensors cost 8 x 18 = 144; 360 - 144 = 216 left; 216 / 24 = 9 panels.";
+  if (/f\(x\) = 3x \+ 7/i.test(text)) return "Set 3x + 7 = 52, so 3x = 45 and x = 15.";
+  if (/study time rising from 20 to 50/i.test(text)) return "From 20 to 50 minutes is three 10-minute steps; accuracy rises 68 to 83, a 15-point gain, so 15 / 3 = 5 points per 10 minutes.";
+  return null;
+}
+
+function logicAnswerFor(text: string): string | null {
+  if (/5, 8, 11/.test(text)) return "14 and 17. The rule adds 3 each time.";
+  if (/2, 5, 11, 23, 47/.test(text)) return "95. Each step doubles the number and adds 1 (n x 2 + 1).";
+  if (/better evidence/i.test(text)) return "A detail from the passage, because it can be proven by pointing to the text; a memory guess cannot be checked.";
+  if (/tiny diagram/i.test(text)) return "A simple labeled sketch that lays out the known numbers or steps before solving.";
+  if (/can help someone practice/i.test(text)) return "Open response: any clear sentence linking the interest to focus, repetition, or strategy.";
+  if (/which plan would you recommend/i.test(text)) return "Open response. A strong answer weighs higher average scores against steadier scores and justifies the choice with the data.";
+  if (/historian argues/i.test(text)) return "Open response. Stronger evidence would include records, dates, economic data, or comparisons that rule out other causes.";
+  if (/two-sentence argument/i.test(text)) return "Open response: two sentences linking the interest to persistence, with one reason and one example.";
+  return null;
+}
+
+function logicExplanationFor(text: string): string | null {
+  if (/5, 8, 11/.test(text)) return "Continue the add-3 pattern: 11 + 3 = 14, then 14 + 3 = 17.";
+  if (/2, 5, 11, 23, 47/.test(text)) return "Check the rule: 2x2+1=5, 5x2+1=11, 11x2+1=23, 23x2+1=47, so 47x2+1=95.";
+  if (/better evidence/i.test(text)) return "Evidence you can point to is checkable; memory can be mistaken, so a passage detail is stronger.";
+  if (/tiny diagram/i.test(text)) return "Drawing the problem first makes the known and unknown parts visible before calculating.";
+  return "A strong answer names the rule or the evidence and shows the reasoning step by step.";
+}
+
+function fallbackChoiceLine(question: { section: string; text: string }): string {
+  const choices = mathChoicesFor(question);
+  if (!choices) return "";
+  const rendered = choices
+    .map((option, index) => `${String.fromCharCode(65 + index)}. ${escapeHtml(option)}`)
+    .join(" &nbsp; ");
+  return `<p class="choice-line">${rendered}</p>`;
+}
+
+function mathChoicesFor(question: { section: string; text: string }): string[] | null {
+  if (question.section !== "Math Reasoning") return null;
+  const text = question.text;
+  if (/4 sets of 6/i.test(text)) return ["18", "24", "10", "36"];
+  if (/3, 6, 12, 24/i.test(text)) return ["36 and 48", "48 and 96", "30 and 36", "48 and 72"];
+  if (/12 pages/i.test(text)) return ["25", "27", "3", "17"];
+  if (/30 minutes/i.test(text)) return ["5", "6", "25", "35"];
+  if (/42 of 60/i.test(text)) return ["80 percent", "85 percent", "70 percent", "57 percent"];
+  if (/budget of \$360/i.test(text)) return ["7 panels", "9 panels", "12 panels", "15 panels"];
+  if (/f\(x\) = 3x \+ 7/i.test(text)) return ["x = 12", "x = 15", "x = 18", "x = 20"];
+  if (/study time rising from 20 to 50/i.test(text)) return ["3 points", "5 points", "7.5 points", "15 points"];
+  return null;
+}
+
+function questionHintFor(question: { section: string }): string {
+  if (question.section === "Math Reasoning") return "Show your setup, then circle the matching answer choice.";
+  if (question.section === "Reading Comprehension") return "Point to the sentence in the passage that proves your answer.";
+  if (question.section === "Vocabulary in Context") return "Use a context clue and write a full sentence.";
+  return "Explain your thinking in one or two clear sentences.";
 }
 
 function parseJsonContent(content: string): unknown {
