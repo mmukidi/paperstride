@@ -79,6 +79,10 @@ const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 180000);
 const llmEndpoint = `${LLM_BASE_URL}/chat/completions`;
 // The AI path runs when any LLM backend is configured (a key, or a non-Groq base URL).
 const llmConfigured = Boolean(process.env.LLM_BASE_URL || process.env.GROQ_API_KEY);
+// Local CPU models are much more reliable when they personalize the reading core and
+// the deterministic engine renders the rest from the blueprint. Full AI section
+// generation can be enabled later for faster hosted models or background jobs.
+const LLM_GENERATE_ALL_SECTIONS = process.env.LLM_GENERATE_ALL_SECTIONS === "true";
 
 export async function POST(request: NextRequest) {
   let input: WorksheetInput;
@@ -221,16 +225,21 @@ async function createStagedWorksheetHtml(
     content.passageHtml = undefined;
   }
 
-  // Each remaining subject is its own small call.
-  for (const section of blueprint.sections) {
-    if (PASSAGE_BUNDLE_SUBJECTS.has(section.subject)) continue;
-    try {
-      const questions = await generateSectionQuestions(input, blueprint, section);
-      if (questions.length) {
-        content.sectionQuestions![section.subject] = questions;
+  // Local CPU generation is too slow and too error-prone for every subject. By default,
+  // Prompt 2 personalizes the reading/vocab core and the deterministic banks fill the
+  // remaining sections from Prompt 1's blueprint. Set LLM_GENERATE_ALL_SECTIONS=true
+  // only when the backend is fast and the quality gate is strong enough.
+  if (LLM_GENERATE_ALL_SECTIONS) {
+    for (const section of blueprint.sections) {
+      if (PASSAGE_BUNDLE_SUBJECTS.has(section.subject)) continue;
+      try {
+        const questions = await generateSectionQuestions(input, blueprint, section);
+        if (questions.length) {
+          content.sectionQuestions![section.subject] = questions;
+        }
+      } catch (error) {
+        console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
       }
-    } catch (error) {
-      console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
     }
   }
 
@@ -294,10 +303,11 @@ Return JSON exactly:
 
   const parsed = parseJsonContent(content) as Record<string, unknown>;
   const paragraphs = Array.isArray(parsed.passageParagraphs)
-    ? parsed.passageParagraphs.map((p) => cleanProse(String(p))).filter(Boolean)
+    ? parsed.passageParagraphs.map((p) => cleanGeneratedParagraph(String(p))).filter(Boolean)
     : [];
-  if (!paragraphs.length) {
-    throw new Error("Passage bundle had no passage text.");
+  const wordCount = paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
+  if (!paragraphs.length || wordCount < profile.minReadingWords) {
+    throw new Error("Passage bundle had too little complete passage text.");
   }
 
   const passageHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("\n    ");
@@ -440,11 +450,31 @@ function normalizeGeneratedVocab(value: unknown): string[][] {
 
 // Tidy a model-authored string: collapse whitespace and cap length. Returned text is
 // still escaped at render time, so this is about cleanliness, not safety.
-function cleanProse(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 600);
+function cleanProse(value: string, maxLength = 600): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function cleanGeneratedParagraph(value: string): string {
+  const cleaned = cleanProse(value, 1400);
+  if (cleaned.length < 1400 || /[.!?]"?$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  const sentenceEnd = Math.max(
+    cleaned.lastIndexOf("."),
+    cleaned.lastIndexOf("!"),
+    cleaned.lastIndexOf("?")
+  );
+
+  if (sentenceEnd < 220) {
+    return "";
+  }
+
+  return cleaned.slice(0, sentenceEnd + 1).trim();
 }
 
 async function createLearningBlueprint(input: WorksheetInput): Promise<LearningBlueprint> {
+  const bounds = questionCountBounds(input);
   const content = await groqChat({
     temperature: 0.35,
     maxTokens: 1300,
@@ -466,7 +496,7 @@ Learner details:
 
 Think like the expert panel. First decide the TOTAL number of questions that is right
 for a complete but age-appropriate day of practice at this exact age and grade
-(between ${MIN_TOTAL_QUESTIONS} and ${MAX_TOTAL_QUESTIONS}; younger and earlier grades
+(between ${bounds.min} and ${bounds.max}; younger and earlier grades
 toward the lower end, older grades toward the higher end). Then break that total into
 subject sections that together exercise the full range of skills this learner should
 practice. Choose the subjects yourself from this menu, using only those that fit the
@@ -590,7 +620,7 @@ function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlue
   }
 
   const candidate = value as Partial<LearningBlueprint>;
-  const sections = normalizeSections(candidate.sections, fallback.sections);
+  const sections = normalizeSections(candidate.sections, fallback.sections, input);
   const questionCount = sections.reduce((sum, section) => sum + section.questionCount, 0);
 
   return {
@@ -736,7 +766,18 @@ function canonicalSubject(name: string): string | null {
   return null;
 }
 
-function normalizeSections(value: unknown, fallback: WorksheetSection[]): WorksheetSection[] {
+function questionCountBounds(input: WorksheetInput): { min: number; max: number } {
+  const early = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
+  const elementary = !early && input.age <= 10;
+  const middle = !early && !elementary && input.age <= 14;
+
+  if (early) return { min: MIN_TOTAL_QUESTIONS, max: 10 };
+  if (elementary) return { min: 10, max: 16 };
+  if (middle) return { min: 12, max: 22 };
+  return { min: 16, max: MAX_TOTAL_QUESTIONS };
+}
+
+function normalizeSections(value: unknown, fallback: WorksheetSection[], input: WorksheetInput): WorksheetSection[] {
   if (!Array.isArray(value)) {
     return fallback;
   }
@@ -768,13 +809,14 @@ function normalizeSections(value: unknown, fallback: WorksheetSection[]): Worksh
   const sections = Array.from(bySubject.values());
 
   // Require at least two subjects and a sensible total; otherwise trust the default.
+  const bounds = questionCountBounds(input);
   let total = sections.reduce((sum, section) => sum + section.questionCount, 0);
-  if (sections.length < 2 || total < MIN_TOTAL_QUESTIONS) {
+  if (sections.length < 2 || total < bounds.min) {
     return fallback;
   }
 
   // Trim the largest sections until the total fits the upper bound.
-  while (total > MAX_TOTAL_QUESTIONS) {
+  while (total > bounds.max) {
     const largest = sections.reduce((a, b) => (b.questionCount > a.questionCount ? b : a));
     if (largest.questionCount <= 1) break;
     largest.questionCount -= 1;
@@ -901,6 +943,7 @@ function assembleWorksheet(
   const wantsData = blueprintWantsData(blueprint, plannedSections);
   const dataSnapshot = dataSnapshotBlock(input, blueprint, plannedSections);
   const strategyBlock = strategyBlockFor(input, blueprint);
+  const howToUseCards = howToUseCardsFor(input);
   const passage = content.passageHtml
     ? content.passageHtml
     : high
@@ -1118,10 +1161,7 @@ function assembleWorksheet(
 
   <h2>How To Use This Mission</h2>
   <section class="grid">
-    <article class="card"><p class="label">Close reading</p><h3>Underline before answering</h3><p>For every reading question, mark the phrase that proves your answer. If you cannot point to a clue, the answer is probably a trap answer.</p></article>
-    <article class="card"><p class="label">Math reasoning</p><h3>Show the setup</h3><p>Write the equation, table, or diagram before calculating. Strong test takers make invisible thinking visible.</p></article>
-    <article class="card"><p class="label">Strategy</p><h3>Eliminate with purpose</h3><p>Cross out choices that are too extreme, unsupported, reversed, or only partly true. This builds SAT-style judgment even for future tests.</p></article>
-    <article class="card"><p class="label">Reflection</p><h3>Finish with one improvement</h3><p>After checking the answer sheet, write one habit you will use next time: annotate, estimate, reread, check units, or slow down on tricky words.</p></article>
+    ${howToUseCards}
   </section>
 
   <h2>Reading Comprehension: Evidence Mission</h2>
@@ -1655,6 +1695,38 @@ function strategyBlockFor(input: WorksheetInput, blueprint: LearningBlueprint): 
     title: "Mission Moves",
     html: `<strong>Start with clues:</strong> Underline one helpful word or number. <strong>Show your thinking:</strong> Draw, write, or circle before answering. <strong>Check one thing:</strong> Reread the question or redo the math. <strong>Keep going:</strong> ${motivation}`
   };
+}
+
+function howToUseCardsFor(input: WorksheetInput): string {
+  const high = input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
+  const middle = !high && input.age >= 11;
+  const cards = high
+    ? [
+        ["Close reading", "Underline before answering", "For every reading question, mark the phrase that proves your answer. If you cannot point to a clue, the answer is probably a trap answer."],
+        ["Quant reasoning", "Show the setup", "Write the equation, table, or diagram before calculating. Strong test takers make invisible thinking visible."],
+        ["Strategy", "Eliminate with purpose", "Cross out choices that are too extreme, unsupported, reversed, or only partly true."],
+        ["Reflection", "Finish with one improvement", "After checking the answer sheet, write one habit you will use next time: annotate, estimate, reread, check units, or slow down on tricky words."]
+      ]
+    : middle
+      ? [
+          ["Close reading", "Find the proof", "For every reading question, underline the words that help you answer."],
+          ["Reasoning", "Show the setup", "Write the equation, table, rule, or quick sketch before solving."],
+          ["Focus", "Pause on tricky choices", "If two answers seem possible, reread the question and choose the one with better evidence."],
+          ["Reflection", "Pick one next move", "After checking answers, choose one habit to try next time: reread, estimate, label units, or explain more clearly."]
+        ]
+      : [
+          ["Reading clues", "Point to proof", "Underline one sentence or word that helped you answer."],
+          ["Math steps", "Show your thinking", "Write the number sentence, draw a tiny picture, or circle the important numbers."],
+          ["Focus", "Try one careful move", "If a question feels tricky, slow down and take the next small step."],
+          ["Confidence", "Notice progress", "After checking answers, pick one thing you did well and one thing to try again."]
+        ];
+
+  return cards
+    .map(
+      ([label, title, body]) =>
+        `<article class="card"><p class="label">${escapeHtml(label)}</p><h3>${escapeHtml(title)}</h3><p>${escapeHtml(body)}</p></article>`
+    )
+    .join("");
 }
 
 function watchOutFor(section: string, high: boolean): string {
