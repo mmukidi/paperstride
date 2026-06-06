@@ -68,7 +68,17 @@ const allowedGrades = new Set([
   "Master's"
 ]);
 
-const groqEndpoint = "https://api.groq.com/openai/v1/chat/completions";
+// LLM backend is OpenAI-compatible and fully configurable. Defaults to Groq, but can
+// point at a self-hosted Ollama server (LLM_BASE_URL=http://host:11434/v1, no key).
+const LLM_BASE_URL = (process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+const LLM_MODEL = process.env.LLM_MODEL || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const LLM_API_KEY = process.env.LLM_API_KEY || process.env.GROQ_API_KEY || "";
+// Per-call timeout. Local CPU inference is slow, so allow minutes before giving up and
+// letting that one section fall back to the deterministic bank.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 180000);
+const llmEndpoint = `${LLM_BASE_URL}/chat/completions`;
+// The AI path runs when any LLM backend is configured (a key, or a non-Groq base URL).
+const llmConfigured = Boolean(process.env.LLM_BASE_URL || process.env.GROQ_API_KEY);
 
 export async function POST(request: NextRequest) {
   let input: WorksheetInput;
@@ -85,7 +95,7 @@ export async function POST(request: NextRequest) {
   try {
     let html: string;
 
-    if (process.env.GROQ_API_KEY) {
+    if (llmConfigured) {
       try {
         html = await createHtmlWorksheetWithGroq(input);
       } catch (error) {
@@ -453,51 +463,60 @@ async function groqChat(options: {
   let lastError = "";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(groqEndpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-        temperature: options.temperature,
-        max_tokens: options.maxTokens,
-        ...(options.responseFormat
-          ? {
-              response_format: {
-                type: options.responseFormat
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(llmEndpoint, {
+        method: "POST",
+        headers: {
+          ...(LLM_API_KEY ? { Authorization: `Bearer ${LLM_API_KEY}` } : {}),
+          "Content-Type": "application/json"
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: LLM_MODEL,
+          temperature: options.temperature,
+          max_tokens: options.maxTokens,
+          ...(options.responseFormat
+            ? {
+                response_format: {
+                  type: options.responseFormat
+                }
               }
-            }
-          : {}),
-        messages: options.messages
-      })
-    });
+            : {}),
+          messages: options.messages
+        })
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (response.status === 429 && attempt === 0) {
       lastError = await response.text().catch(() => "");
       const waitMs = retryDelayMs(lastError);
-      console.warn(`Groq rate limited worksheet generation; retrying in ${waitMs}ms`);
+      console.warn(`LLM rate limited worksheet generation; retrying in ${waitMs}ms`);
       await sleep(waitMs);
       continue;
     }
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(`Groq returned ${response.status}: ${body.slice(0, 240)}`);
+      throw new Error(`LLM returned ${response.status}: ${body.slice(0, 240)}`);
     }
 
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content;
 
     if (typeof content !== "string" || !content.trim()) {
-      throw new Error("Groq response did not include worksheet content.");
+      throw new Error("LLM response did not include worksheet content.");
     }
 
     return content;
   }
 
-  throw new Error(`Groq rate limit did not clear: ${lastError.slice(0, 240)}`);
+  throw new Error(`LLM rate limit did not clear: ${lastError.slice(0, 240)}`);
 }
 
 function createFallbackHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
