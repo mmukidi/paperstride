@@ -14,7 +14,7 @@ services:
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
       # Self-hosted Ollama on the host (OpenAI-compatible). No API key needed.
       LLM_BASE_URL: "${LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
-      LLM_MODEL: "${LLM_MODEL:-llama3.2:3b}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5:7b-instruct}"
       LLM_TIMEOUT_MS: "${LLM_TIMEOUT_MS:-180000}"
       NEXT_PUBLIC_CONTACT_EMAIL: "${NEXT_PUBLIC_CONTACT_EMAIL:-hello@paperstride.org}"
       NEXT_PUBLIC_SITE_URL: "${NEXT_PUBLIC_SITE_URL:-https://paperstride.duckdns.org}"

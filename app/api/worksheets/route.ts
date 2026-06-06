@@ -352,14 +352,52 @@ function normalizeGeneratedQuestions(value: unknown, limit: number): GeneratedQu
     const explanation = cleanProse(String(candidate.explanation ?? ""));
     if (!prompt || !correctAnswer) continue;
 
-    const choices = Array.isArray(candidate.choices)
-      ? candidate.choices.map((c) => cleanProse(String(c))).filter(Boolean).slice(0, 5)
-      : [];
+    // Clean the choices: drop empty/junk (e.g. "[]", "N/A") and de-duplicate.
+    const seen = new Set<string>();
+    let choices = (Array.isArray(candidate.choices) ? candidate.choices : [])
+      .map((c) => cleanProse(String(c)))
+      .filter((c) => c && !/^(\[\s*\]|n\/?a|none|tbd|\.+)$/i.test(c))
+      .filter((c) => {
+        const key = c.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 5);
+
+    // If it's meant to be multiple choice, the correct answer MUST be one of the
+    // options. A small model sometimes invents an answer that isn't listed (or leaves
+    // only one valid option) — drop those so the section bank-fills a valid question
+    // instead of shipping a broken or "closest answer" item.
+    if (choices.length > 0) {
+      if (choices.length < 2) {
+        choices = []; // too few real options → treat as written response
+      } else if (!multipleChoiceAnswerIsValid(correctAnswer, choices)) {
+        continue;
+      }
+    }
 
     questions.push({ prompt, choices, correctAnswer, explanation: explanation || "Check the answer against the question." });
     if (questions.length >= limit) break;
   }
   return questions;
+}
+
+// True if the correct answer corresponds to one of the choices: either a letter
+// (A/B/C/D) within range, or a text match against an option.
+function multipleChoiceAnswerIsValid(correctAnswer: string, choices: string[]): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").replace(/[.)]+$/, "").trim();
+  const ans = norm(correctAnswer);
+
+  const letter = ans.match(/^([a-d])$/);
+  if (letter) {
+    const idx = letter[1].charCodeAt(0) - 97;
+    return idx < choices.length;
+  }
+  return choices.some((c) => {
+    const co = norm(c);
+    return co === ans || co.includes(ans) || ans.includes(co);
+  });
 }
 
 function normalizeGeneratedVocab(value: unknown): string[][] {
@@ -961,6 +999,7 @@ function assembleWorksheet(
     </section>`
     )
     .join("\n");
+  const funZone = funZoneBlock(input, theme);
   const answerCards = allQuestions
     .map(
       (q) => `<article class="answer" data-answer="true">
@@ -1013,6 +1052,17 @@ function assembleWorksheet(
   .section-head { margin:14px 0 6px; padding:4px 8px; background:var(--soft); border-left:3px solid var(--accent); font-size:15px; }
   .write { min-height:44px; border-bottom:1px solid var(--ink); margin-top:8px; }
   .choice-line { font-size:13px; color:#303836; }
+  .fun-card { background:var(--cool); }
+  .puzzle-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:6px 0; }
+  .puzzle-shape svg { width:26px; height:26px; }
+  .puzzle-blank { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border:1px dashed var(--accent); border-radius:4px; font-weight:700; color:var(--accent); }
+  .puzzle-svg { width:100%; max-width:200px; height:auto; margin-top:4px; }
+  .puzzle-pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .puzzle-cap { font-size:12px; color:var(--muted); margin:0 0 2px; }
+  .puzzle-code { font-family:monospace; font-size:16px; letter-spacing:1px; margin:6px 0; }
+  .puzzle-word { display:inline-block; border:1px solid var(--line); border-radius:4px; padding:1px 6px; margin:2px; font-size:12px; }
+  .ws-grid { border-collapse:collapse; margin-top:6px; }
+  .ws-grid td { border:1px solid var(--line); width:21px; height:21px; text-align:center; font-family:monospace; font-size:12px; }
   .hint { color:var(--muted); font-size:12px; margin-bottom:0; }
   svg { max-width:100%; height:auto; stroke:var(--accent); fill:none; stroke-width:2; }
   @media (max-width: 720px) { .page { margin:0; min-height:auto; padding:18px; } .hero, .grid, .vocab-grid { grid-template-columns:1fr; } .passage { columns:1; } }
@@ -1082,9 +1132,12 @@ function assembleWorksheet(
   <h2>Question Missions</h2>
   ${questionSectionsHtml}
 
+  ${funZone.html}
+
   <h2>Answer Sheet</h2>
   <section class="grid">
     ${answerCards}
+    ${funZone.answersHtml}
   </section>
 
   <h2>Smart Test Strategies &amp; SAT Power Tips</h2>
@@ -1490,6 +1543,188 @@ function themeTitle(theme: string): string {
     .split(/\s+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Fun Zone: deterministic, age-scaled brain-break activities. These are generated
+// in code (not by the LLM) so they are always correct and printable.
+// ---------------------------------------------------------------------------
+
+function seededRng(seed: string): () => number {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i += 1) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  };
+}
+
+type FunActivity = { html: string; answer: string };
+
+const SHAPE_SVG: Record<string, string> = {
+  circle: '<circle cx="14" cy="14" r="9"></circle>',
+  square: '<rect x="5" y="5" width="18" height="18" rx="2"></rect>',
+  triangle: '<path d="M14 4 L25 24 L3 24 Z"></path>',
+  star: '<path d="M14 3 L17 11 L25 11 L18 16 L21 24 L14 19 L7 24 L10 16 L3 11 L11 11 Z"></path>'
+};
+
+function shapeBox(shape: string): string {
+  return `<span class="puzzle-shape"><svg viewBox="0 0 28 28" aria-hidden="true">${SHAPE_SVG[shape] || SHAPE_SVG.circle}</svg></span>`;
+}
+
+function patternPuzzle(young: boolean, rng: () => number): FunActivity {
+  if (young) {
+    const units = [
+      ["circle", "square"],
+      ["circle", "triangle"],
+      ["star", "circle"],
+      ["square", "triangle"]
+    ];
+    const unit = units[Math.floor(rng() * units.length)];
+    const seq = Array.from({ length: 6 }, (_u, i) => unit[i % unit.length]);
+    const next = [unit[6 % unit.length], unit[7 % unit.length]];
+    const boxes = seq.map(shapeBox).join("") + '<span class="puzzle-blank">?</span><span class="puzzle-blank">?</span>';
+    return {
+      html: `<p><strong>Pattern Power.</strong> What two shapes come next?</p><p class="puzzle-row">${boxes}</p>`,
+      answer: `Pattern Power: ${next.join(" then ")}.`
+    };
+  }
+  const rules = [
+    { seq: [2, 4, 8, 16], next: [32, 64], why: "double each time" },
+    { seq: [3, 6, 9, 12], next: [15, 18], why: "add 3 each time" },
+    { seq: [1, 4, 9, 16], next: [25, 36], why: "square numbers (1², 2², 3²…)" },
+    { seq: [2, 5, 11, 23], next: [47, 95], why: "double and add 1" }
+  ];
+  const r = rules[Math.floor(rng() * rules.length)];
+  return {
+    html: `<p><strong>Pattern Power.</strong> Find the next two numbers: <strong>${r.seq.join(", ")}, __, __</strong></p>`,
+    answer: `Pattern Power: ${r.next.join(" and ")} (${r.why}).`
+  };
+}
+
+function spotTheDifference(): FunActivity {
+  const sceneA = `<svg viewBox="0 0 200 120" class="puzzle-svg" aria-label="Picture A">
+      <circle cx="32" cy="28" r="14"></circle>
+      <path d="M70 100 L82 70 L94 100 Z"></path>
+      <path d="M104 100 L116 70 L128 100 Z"></path>
+      <rect x="140" y="64" width="40" height="40"></rect>
+      <rect x="152" y="74" width="14" height="14"></rect>
+      <line x1="10" y1="104" x2="190" y2="104"></line>
+    </svg>`;
+  const sceneB = `<svg viewBox="0 0 200 120" class="puzzle-svg" aria-label="Picture B">
+      <circle cx="32" cy="28" r="9"></circle>
+      <path d="M70 100 L82 70 L94 100 Z"></path>
+      <rect x="140" y="64" width="40" height="40"></rect>
+      <path d="M30 56 q6 -6 12 0"></path>
+      <line x1="10" y1="104" x2="190" y2="104"></line>
+    </svg>`;
+  return {
+    html: `<p><strong>Spot the Difference.</strong> Find <strong>4</strong> things that changed in Picture B.</p>
+      <div class="puzzle-pair"><div><p class="puzzle-cap">Picture A</p>${sceneA}</div><div><p class="puzzle-cap">Picture B</p>${sceneB}</div></div>`,
+    answer: "Spot the Difference: (1) the sun is smaller, (2) one tree is missing, (3) the house window is gone, (4) a bird appears in the sky."
+  };
+}
+
+function connectTheDots(): FunActivity {
+  const pts = [
+    [100, 12], [118, 40], [150, 42], [126, 64], [136, 96],
+    [100, 78], [64, 96], [74, 64], [50, 42], [82, 40]
+  ];
+  const dots = pts
+    .map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="2.5"></circle><text x="${x + 4}" y="${y - 4}" font-size="9" fill="#126163">${i + 1}</text>`)
+    .join("");
+  return {
+    html: `<p><strong>Connect the Dots.</strong> Draw a line from 1 to 2 to 3 … all the way to 10. What shape did you make?</p>
+      <svg viewBox="0 0 200 110" class="puzzle-svg" aria-label="Connect the dots">${dots}</svg>`,
+    answer: "Connect the Dots: it makes a star."
+  };
+}
+
+function wordSearch(words: string[], size: number, rng: () => number): FunActivity {
+  const grid: string[][] = Array.from({ length: size }, () => Array(size).fill(""));
+  const placed: string[] = [];
+  for (const raw of words) {
+    const w = raw.toUpperCase().replace(/[^A-Z]/g, "");
+    if (w.length < 3 || w.length > size) continue;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const horizontal = rng() < 0.5;
+      const r = Math.floor(rng() * size);
+      const c = Math.floor(rng() * size);
+      const er = horizontal ? r : r + w.length - 1;
+      const ec = horizontal ? c + w.length - 1 : c;
+      if (er >= size || ec >= size) continue;
+      let fits = true;
+      for (let k = 0; k < w.length; k += 1) {
+        const cell = grid[horizontal ? r : r + k][horizontal ? c + k : c];
+        if (cell && cell !== w[k]) { fits = false; break; }
+      }
+      if (!fits) continue;
+      for (let k = 0; k < w.length; k += 1) grid[horizontal ? r : r + k][horizontal ? c + k : c] = w[k];
+      placed.push(w);
+      break;
+    }
+  }
+  const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for (let r = 0; r < size; r += 1) {
+    for (let c = 0; c < size; c += 1) {
+      if (!grid[r][c]) grid[r][c] = alpha[Math.floor(rng() * 26)];
+    }
+  }
+  const rows = grid.map((row) => `<tr>${row.map((ch) => `<td>${ch}</td>`).join("")}</tr>`).join("");
+  const list = placed.map((w) => `<span class="puzzle-word">${escapeHtml(w)}</span>`).join("");
+  return {
+    html: `<p><strong>Word Search.</strong> Find these words (across or down): ${list}</p><table class="ws-grid">${rows}</table>`,
+    answer: `Word Search words: ${placed.join(", ")}.`
+  };
+}
+
+function crackTheCode(word: string): FunActivity {
+  const clean = word.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 10) || "STAR";
+  const code = clean.split("").map((ch) => ch.charCodeAt(0) - 64).join(" - ");
+  return {
+    html: `<p><strong>Crack the Code.</strong> Key: <em>A=1, B=2, C=3 … Z=26</em>. What word is this?</p>
+      <p class="puzzle-code">${escapeHtml(code)}</p><div class="write"></div>`,
+    answer: `Crack the Code: ${clean}.`
+  };
+}
+
+function funZoneBlock(input: WorksheetInput, theme: string): { html: string; answersHtml: string } {
+  const rng = seededRng(`${input.childName}|${input.interests}|${input.grade}`);
+  const young = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
+  const elementary = !young && input.age <= 10;
+
+  // Build a small word list from the learner's interests plus friendly fillers.
+  const interestWords = input.interests
+    .split(/[,\s]+/)
+    .map((w) => w.toUpperCase().replace(/[^A-Z]/g, ""))
+    .filter((w) => w.length >= 3 && w.length <= 9);
+  const words = Array.from(new Set([...interestWords, "LEARN", "BRAIN", "SOLVE", "FOCUS"])).slice(0, 6);
+  const firstInterest = input.interests.split(",")[0]?.trim() || "star";
+
+  const activities: FunActivity[] = young
+    ? [patternPuzzle(true, rng), spotTheDifference(), connectTheDots()]
+    : elementary
+      ? [patternPuzzle(false, rng), spotTheDifference(), wordSearch(words, 9, rng), crackTheCode(firstInterest)]
+      : [patternPuzzle(false, rng), wordSearch(words, 11, rng), crackTheCode(firstInterest), spotTheDifference()];
+
+  const cards = activities
+    .map((a) => `<article class="card fun-card">${a.html}</article>`)
+    .join("");
+  const answers = activities
+    .map((a) => `<p>${escapeHtml(a.answer)}</p>`)
+    .join("");
+
+  return {
+    html: `<h2>Brain Break: Fun Zone</h2>
+  <p class="meta">Stretch your thinking with puzzles tied to ${escapeHtml(theme)}. Have fun!</p>
+  <section class="grid">${cards}</section>`,
+    answersHtml: `<article class="answer" data-funzone="true"><h3>Fun Zone — Answers</h3>${answers}</article>`
+  };
 }
 
 function jsonError(message: string, status: number) {
