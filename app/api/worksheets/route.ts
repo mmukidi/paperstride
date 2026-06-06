@@ -148,53 +148,231 @@ async function parseInput(request: NextRequest): Promise<WorksheetInput> {
   };
 }
 
+// One AI-authored question, returned as structured JSON so we render it into our own
+// safe template (no raw AI HTML is ever injected).
+type GeneratedQuestion = {
+  prompt: string;
+  choices: string[];
+  correctAnswer: string;
+  explanation: string;
+};
+
+// Optional AI-authored pieces injected into the deterministic assembler. Anything
+// absent is filled from the deterministic banks, so the worksheet is always complete.
+type WorksheetContent = {
+  passageHtml?: string;
+  vocab?: string[][];
+  readingQuestions?: GeneratedQuestion[];
+  sectionQuestions?: Record<string, GeneratedQuestion[]>;
+};
+
+const PASSAGE_BUNDLE_SUBJECTS = new Set(["Reading Comprehension", "Vocabulary in Context"]);
+
 async function createHtmlWorksheetWithGroq(input: WorksheetInput): Promise<string> {
   const blueprint = await createLearningBlueprint(input);
-  const rawHtml = await createWorksheetHtml(input, blueprint);
-
-  // Hard safety gate first. Unsafe or malformed HTML must never reach the learner.
-  const safety = validateStaticHtml(rawHtml);
-
-  if (safety.ok) {
-    const quality = validateHtmlQuality(safety.html, input, blueprint);
-
-    if (quality.ok) {
-      return injectNickname(safety.html, input.childName);
-    }
-
-    // The AI produced a safe, on-theme worksheet that is merely shorter than our
-    // ideal target. A real personalized worksheet beats a generic template, so we
-    // keep it as long as it is structurally complete (passage, questions, answers,
-    // vocabulary). Discarding it for length is what produced the generic fallback.
-    if (aiOutputIsKeepable(safety.html, input, blueprint)) {
-      console.warn("AI worksheet below ideal target but structurally complete; keeping it", quality.reason);
-      return injectNickname(safety.html, input.childName);
-    }
-
-    console.warn("AI worksheet too thin to keep; attempting one repair", quality.reason);
-  } else {
-    console.warn("AI worksheet failed safety/structure validation; attempting one repair", safety.reason);
-  }
-
-  const reason = safety.ok ? "Workbook was structurally incomplete or far too thin." : safety.reason;
-
-  let repairedHtml: string;
 
   try {
-    repairedHtml = await repairWorksheetHtml(input, blueprint, rawHtml, reason);
+    const html = await createStagedWorksheetHtml(input, blueprint);
+    return injectNickname(html, input.childName);
   } catch (error) {
-    console.warn("Worksheet repair failed; using quality fallback", error);
+    console.warn("Staged worksheet generation failed; using quality fallback", error);
     return createFallbackHtmlWorksheet(input, blueprint);
   }
+}
 
-  const repairedSafety = validateStaticHtml(repairedHtml);
+// Phase 3: generate the worksheet in small, well-scoped pieces instead of one giant
+// call. Each piece is attempted independently and degrades to the deterministic bank on
+// failure, so a thin or rate-limited response only affects that one section.
+async function createStagedWorksheetHtml(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint
+): Promise<string> {
+  const content: WorksheetContent = { sectionQuestions: {} };
 
-  if (repairedSafety.ok && aiOutputIsKeepable(repairedSafety.html, input, blueprint)) {
-    return injectNickname(repairedSafety.html, input.childName);
+  const wantsReading = blueprint.sections.some((section) => section.subject === "Reading Comprehension");
+  const vocabSection = blueprint.sections.find((section) => section.subject === "Vocabulary in Context");
+
+  // One call produces the reading passage, its questions, and vocabulary together so
+  // the passage and the questions about it always stay consistent.
+  if (wantsReading || vocabSection) {
+    try {
+      const bundle = await generatePassageBundle(input, blueprint);
+      content.passageHtml = bundle.passageHtml;
+      content.vocab = bundle.vocab.length ? bundle.vocab : undefined;
+      content.readingQuestions = bundle.readingQuestions.length ? bundle.readingQuestions : undefined;
+    } catch (error) {
+      console.warn("Passage bundle failed; using bank passage and vocabulary", error);
+    }
   }
 
-  console.warn("Repaired worksheet still unusable; using quality fallback");
-  return createFallbackHtmlWorksheet(input, blueprint);
+  // Keep the passage and its questions consistent: if the AI passage arrived without
+  // matching reading questions, drop it so the bank passage and bank questions pair up.
+  if (wantsReading && !content.readingQuestions) {
+    content.passageHtml = undefined;
+  }
+
+  // Each remaining subject is its own small call.
+  for (const section of blueprint.sections) {
+    if (PASSAGE_BUNDLE_SUBJECTS.has(section.subject)) continue;
+    try {
+      const questions = await generateSectionQuestions(input, blueprint, section);
+      if (questions.length) {
+        content.sectionQuestions![section.subject] = questions;
+      }
+    } catch (error) {
+      console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
+    }
+  }
+
+  return assembleWorksheet(input, blueprint, content);
+}
+
+async function generatePassageBundle(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint
+): Promise<{ passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[] }> {
+  const profile = qualityProfileFor(input);
+  const readingCount = blueprint.sections.find((s) => s.subject === "Reading Comprehension")?.questionCount ?? 4;
+  const vocabCount = Math.max(
+    profile.minVocabularyCards,
+    blueprint.sections.find((s) => s.subject === "Vocabulary in Context")?.questionCount ?? profile.minVocabularyCards
+  );
+
+  const content = await groqChat({
+    temperature: 0.5,
+    maxTokens: 1700,
+    responseFormat: "json_object",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You write original, grade-appropriate reading passages and the comprehension questions about them. Return only valid JSON. Never include the learner's name or any private data."
+      },
+      {
+        role: "user",
+        content: `Write an ORIGINAL reading passage for this learner and the questions about it.
+
+Learner:
+- Grade or level: ${input.grade}
+- Age: ${input.age}
+- Interest themes: ${input.interests}
+
+Requirements:
+- The passage must be original, engaging, and tied to the interests, at least ${profile.minReadingWords} words, at this exact reading level.
+- Write ${readingCount} comprehension questions about the passage (main idea, evidence, vocabulary in context, inference as age allows). Where a multiple-choice question fits, give 3-4 options with exactly one correct option that appears in "choices"; otherwise use an empty "choices" array for a written response.
+- Pull ${vocabCount} useful words FROM the passage with a simple definition, an example sentence, and a memory hint.
+
+Return JSON exactly:
+{
+  "passageParagraphs": ["paragraph 1", "paragraph 2"],
+  "vocab": [ { "word": "", "definition": "", "example": "", "hint": "" } ],
+  "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]
+}`
+      }
+    ]
+  });
+
+  const parsed = parseJsonContent(content) as Record<string, unknown>;
+  const paragraphs = Array.isArray(parsed.passageParagraphs)
+    ? parsed.passageParagraphs.map((p) => cleanProse(String(p))).filter(Boolean)
+    : [];
+  if (!paragraphs.length) {
+    throw new Error("Passage bundle had no passage text.");
+  }
+
+  const passageHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("\n    ");
+  const vocab = normalizeGeneratedVocab(parsed.vocab);
+  const readingQuestions = normalizeGeneratedQuestions(parsed.questions, readingCount);
+
+  return { passageHtml, vocab, readingQuestions };
+}
+
+async function generateSectionQuestions(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint,
+  section: WorksheetSection
+): Promise<GeneratedQuestion[]> {
+  const content = await groqChat({
+    temperature: 0.45,
+    maxTokens: 1100,
+    responseFormat: "json_object",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You write rigorous, grade-appropriate practice questions for one subject, with a correct answer and explanation for each. Return only valid JSON. Never include the learner's name or any private data."
+      },
+      {
+        role: "user",
+        content: `Write practice questions for ONE worksheet section.
+
+Learner:
+- Grade or level: ${input.grade}
+- Age: ${input.age}
+- Interest themes: ${input.interests}
+
+Section: ${section.subject}
+Skills to test: ${section.skills.join(", ") || "core skills for this subject"}
+Focus: ${section.focus}
+
+Requirements:
+- Write EXACTLY ${section.questionCount} questions at this exact grade level, themed to the interests where natural.
+- For ${section.subject}, prefer multiple choice when it fits: give 3-4 options with exactly one correct option that appears in "choices". For open-ended or writing prompts, use an empty "choices" array.
+- Every question needs a clear correct answer (or a model answer for open prompts) and a short explanation of why it is right.
+
+Return JSON exactly:
+{ "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ] }`
+      }
+    ]
+  });
+
+  const parsed = parseJsonContent(content) as Record<string, unknown>;
+  return normalizeGeneratedQuestions(parsed.questions, section.questionCount);
+}
+
+function normalizeGeneratedQuestions(value: unknown, limit: number): GeneratedQuestion[] {
+  if (!Array.isArray(value)) return [];
+
+  const questions: GeneratedQuestion[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const candidate = raw as Record<string, unknown>;
+    const prompt = cleanProse(String(candidate.prompt ?? ""));
+    const correctAnswer = cleanProse(String(candidate.correctAnswer ?? ""));
+    const explanation = cleanProse(String(candidate.explanation ?? ""));
+    if (!prompt || !correctAnswer) continue;
+
+    const choices = Array.isArray(candidate.choices)
+      ? candidate.choices.map((c) => cleanProse(String(c))).filter(Boolean).slice(0, 5)
+      : [];
+
+    questions.push({ prompt, choices, correctAnswer, explanation: explanation || "Check the answer against the question." });
+    if (questions.length >= limit) break;
+  }
+  return questions;
+}
+
+function normalizeGeneratedVocab(value: unknown): string[][] {
+  if (!Array.isArray(value)) return [];
+
+  const vocab: string[][] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const candidate = raw as Record<string, unknown>;
+    const word = cleanProse(String(candidate.word ?? ""));
+    const definition = cleanProse(String(candidate.definition ?? ""));
+    if (!word || !definition) continue;
+    const example = cleanProse(String(candidate.example ?? "")) || `A clear sentence using ${word}.`;
+    const hint = cleanProse(String(candidate.hint ?? "")) || `Connect ${word} to something you know.`;
+    vocab.push([word, definition, example, hint]);
+  }
+  return vocab;
+}
+
+// Tidy a model-authored string: collapse whitespace and cap length. Returned text is
+// still escaped at render time, so this is about cleanliness, not safety.
+function cleanProse(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 600);
 }
 
 // A worksheet is "keepable" when it is structurally complete, even if it is shorter
@@ -1118,6 +1296,27 @@ function extractHtmlDocument(content: string): string {
 }
 
 function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
+  return assembleWorksheet(input, blueprint, {});
+}
+
+type RenderQuestion = {
+  section: string;
+  number: number;
+  promptHtml: string;
+  choices: string[];
+  answerHtml: string;
+  explanationHtml: string;
+  hint: string;
+};
+
+// Build the worksheet from the blueprint section plan. Any AI-authored pieces present
+// in `content` are used; everything else is filled from the deterministic banks, so the
+// worksheet is always complete and on-plan whether or not the AI calls succeeded.
+function assembleWorksheet(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint,
+  content: WorksheetContent
+): string {
   const theme = escapeHtml(input.interests.split(",")[0]?.trim() || "learning");
   const allInterests = escapeHtml(input.interests);
   const grade = escapeHtml(input.grade);
@@ -1125,12 +1324,14 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
   const middle = !high && input.age >= 11;
   const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
   const answerContext = { high, isSpace: isSpaceTheme };
-  const passage = high
-    ? highSchoolFallbackPassage(theme)
-    : middle
-      ? middleSchoolFallbackPassage(theme, allInterests)
-      : elementaryFallbackPassage(theme, allInterests);
-  const vocabWords = high
+  const passage = content.passageHtml
+    ? content.passageHtml
+    : high
+      ? highSchoolFallbackPassage(theme)
+      : middle
+        ? middleSchoolFallbackPassage(theme, allInterests)
+        : elementaryFallbackPassage(theme, allInterests);
+  const bankVocab = high
     ? [
         ["calibrate", "to adjust carefully so something works accurately", "Before the tournament, the team calibrates its shot tracker.", "Calibrate sounds like calculate and balance."],
         ["constraint", "a limit that shapes what choices are possible", "A time limit is a constraint during a test.", "A constraint constrains, or holds in, your options."],
@@ -1148,35 +1349,86 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
         ["compare", "to tell how things are alike and different", "Compare the two patterns.", "Compare means check side by side."],
         ["predict", "to make a smart guess using clues", "Predict the next number.", "Predict means think ahead."]
       ];
+  const vocabWords = content.vocab?.length ? content.vocab : bankVocab;
 
   // Theme-aware question banks, one per canonical subject.
   const banks = fallbackQuestionBanks({ high, theme, vocabWords });
 
-  // Build questions strictly from the blueprint section plan: each section gets
-  // exactly its planned number of questions, so no subject is ever starved.
-  const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
+  // Vocabulary questions are templated from the vocabulary words (AI or bank).
+  const vocabQuestions: GeneratedQuestion[] = vocabWords.map(([word]) => ({
+    prompt: `Use ${word} in a precise sentence connected to ${theme}, then explain which clue helped you understand it.`,
+    choices: [],
+    correctAnswer: "A complete sentence that uses the vocabulary word correctly and connects it to the mission theme.",
+    explanation: "The sentence should prove the learner understands the word, not just copy it. A good sentence gives context clues."
+  }));
+
+  const aiQuestionsFor = (subject: string): GeneratedQuestion[] | undefined => {
+    if (subject === "Reading Comprehension") return content.readingQuestions;
+    if (subject === "Vocabulary in Context") return vocabQuestions;
+    return content.sectionQuestions?.[subject];
+  };
+
   let runningNumber = 0;
+  const fromBank = (subject: string, index: number): RenderQuestion => {
+    const bank = banks[subject]?.length ? banks[subject] : banks["Critical Thinking"];
+    const fq: FallbackQuestion = {
+      section: subject,
+      text: bank[index % bank.length],
+      number: runningNumber,
+      indexInSection: index
+    };
+    return {
+      section: subject,
+      number: runningNumber,
+      promptHtml: escapeHtml(fq.text),
+      choices: (mathChoicesFor(fq) ?? []).map(escapeHtml),
+      answerHtml: fallbackAnswerFor(fq, theme, answerContext),
+      explanationHtml: fallbackExplanationFor(fq, theme, answerContext),
+      hint: questionHintFor(fq)
+    };
+  };
+  const fromAi = (subject: string, q: GeneratedQuestion): RenderQuestion => ({
+    section: subject,
+    number: runningNumber,
+    promptHtml: escapeHtml(q.prompt),
+    choices: q.choices.map(escapeHtml),
+    answerHtml: escapeHtml(q.correctAnswer),
+    explanationHtml: escapeHtml(q.explanation),
+    hint: questionHintFor({ section: subject })
+  });
+
+  // Build questions strictly from the blueprint section plan: each section gets exactly
+  // its planned count, AI-authored where available and bank-filled otherwise.
+  const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
   const builtSections = plannedSections.map((section) => {
-    const bank = banks[section.subject]?.length ? banks[section.subject] : banks["Critical Thinking"];
+    const ai = aiQuestionsFor(section.subject);
+
+    // Reading is atomic: its questions and answers must match the passage that is shown,
+    // so we never mix AI reading questions with bank ones (which describe a different
+    // passage). The staged pipeline guarantees the AI passage and questions arrive together.
+    if (section.subject === "Reading Comprehension" && ai && ai.length) {
+      const questions = ai.map((aiQuestion) => {
+        runningNumber += 1;
+        return fromAi(section.subject, aiQuestion);
+      });
+      return { subject: section.subject, questions };
+    }
+
     const questions = Array.from({ length: section.questionCount }, (_unused, index) => {
       runningNumber += 1;
-      return {
-        section: section.subject,
-        text: bank[index % bank.length],
-        number: runningNumber,
-        indexInSection: index
-      };
+      const aiQuestion = ai && ai[index];
+      return aiQuestion ? fromAi(section.subject, aiQuestion) : fromBank(section.subject, index);
     });
     return { subject: section.subject, questions };
   });
   const allQuestions = builtSections.flatMap((section) => section.questions);
 
-  const renderQuestionCard = (question: FallbackQuestion) => `<article class="card question" data-question="true">
-        <p class="label">Q${question.number} | ${escapeHtml(question.section)}</p>
-        <h3>${escapeHtml(question.text)}</h3>
-        ${fallbackChoiceLine(question)}
+  const renderQuestionCard = (q: RenderQuestion) => `<article class="card question" data-question="true">
+        <p class="label">Q${q.number} | ${escapeHtml(q.section)}</p>
+        <h3>${q.promptHtml}</h3>
+        ${q.choices.length ? `<p class="choice-line">${q.choices.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join(" &nbsp; ")}</p>` : ""}
         <div class="write"></div>
-        <p class="hint">${escapeHtml(questionHintFor(question))}</p>
+        <p class="hint">${escapeHtml(q.hint)}</p>
       </article>`;
   const questionSectionsHtml = builtSections
     .map(
@@ -1188,12 +1440,12 @@ function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlu
     .join("\n");
   const answerCards = allQuestions
     .map(
-      (question) => `<article class="answer" data-answer="true">
-        <h3>Q${question.number}. ${escapeHtml(question.section)}</h3>
-        <p><strong>Correct answer:</strong> ${fallbackAnswerFor(question, theme, answerContext)}</p>
-        <p><strong>Why it is right:</strong> ${fallbackExplanationFor(question, theme, answerContext)}</p>
+      (q) => `<article class="answer" data-answer="true">
+        <h3>Q${q.number}. ${escapeHtml(q.section)}</h3>
+        <p><strong>Correct answer:</strong> ${q.answerHtml}</p>
+        <p><strong>Why it is right:</strong> ${q.explanationHtml}</p>
         <p><strong>Common wrong or trap answer:</strong> A plausible answer may sound reasonable but fail because it ignores a key word, skips evidence, or uses only part of the data.</p>
-        <p><strong>Skill being tested:</strong> ${escapeHtml(question.section)}. <strong>Tip:</strong> Circle the command word, prove your answer, and check one possible wrong answer before moving on.</p>
+        <p><strong>Skill being tested:</strong> ${escapeHtml(q.section)}. <strong>Tip:</strong> Circle the command word, prove your answer, and check one possible wrong answer before moving on.</p>
       </article>`
     )
     .join("");
