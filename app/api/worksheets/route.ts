@@ -1025,24 +1025,8 @@ function assembleWorksheet(
       : middle
         ? middleSchoolFallbackPassage(theme, allInterests)
         : elementaryFallbackPassage(theme, allInterests);
-  const bankVocab = high
-    ? [
-        ["calibrate", "to adjust carefully so something works accurately", "Before the tournament, the team calibrates its shot tracker.", "Calibrate sounds like calculate and balance."],
-        ["constraint", "a limit that shapes what choices are possible", "A time limit is a constraint during a test.", "A constraint constrains, or holds in, your options."],
-        ["inference", "a conclusion based on clues, not a sentence copied directly", "She made an inference from the data table.", "Infer means figure out from evidence."],
-        ["discipline", "steady control that helps someone keep improving", "Daily review builds discipline.", "Discipline is practice plus self-control."],
-        ["plausible", "reasonable or believable at first", "A plausible answer can still be wrong if the evidence does not support it.", "Pause at plausible choices and check evidence."],
-        ["synthesis", "combining ideas to form a stronger understanding", "The essay used synthesis by connecting history and technology.", "Synthesis means ideas are stitched together."],
-        ["evaluate", "to judge the quality or value of something", "Evaluate each answer choice before picking.", "Evaluate means give it a value."],
-        ["bias", "a preference that can make judgment less fair or accurate", "The graph may reveal bias in which data was collected.", "Bias bends judgment in one direction."]
-      ]
-    : [
-        ["strategy", "a plan for solving a problem", "My strategy is to underline clues first.", "A strategy is your study plan."],
-        ["evidence", "details that support an answer", "I found evidence in the passage.", "Evidence is the proof."],
-        ["observe", "to look carefully", "Scientists observe before they explain.", "Observe means look closely."],
-        ["compare", "to tell how things are alike and different", "Compare the two patterns.", "Compare means check side by side."],
-        ["predict", "to make a smart guess using clues", "Predict the next number.", "Predict means think ahead."]
-      ];
+  const rawTheme = input.interests.split(",")[0]?.trim() || "your topic";
+  const bankVocab = bankVocabFor(high, middle, rawTheme);
   // Use AI vocabulary when present, but top up from the bank so there are always enough
   // cards (a thin AI vocab list otherwise leaves the worksheet with too few words).
   const minVocab = qualityProfileFor(input).minVocabularyCards;
@@ -1204,6 +1188,10 @@ function assembleWorksheet(
   .puzzle-word { display:inline-block; border:1px solid var(--line); border-radius:4px; padding:1px 6px; margin:2px; font-size:12px; }
   .ws-grid { border-collapse:collapse; margin-top:6px; }
   .ws-grid td { border:1px solid var(--line); width:21px; height:21px; text-align:center; font-family:monospace; font-size:12px; }
+  .magic-square { margin-top:6px; }
+  .magic-square td { border:1px solid var(--ink); width:34px; height:34px; text-align:center; font-size:16px; font-weight:700; }
+  .logic-grid { border-collapse:collapse; margin-top:6px; }
+  .logic-grid th, .logic-grid td { border:1px solid var(--line); padding:4px 8px; text-align:center; font-size:13px; }
   .hint { color:var(--muted); font-size:12px; margin-bottom:0; }
   svg { max-width:100%; height:auto; stroke:var(--accent); fill:none; stroke-width:2; }
   @media (max-width: 720px) { .page { margin:0; min-height:auto; padding:18px; } .hero, .grid, .vocab-grid { grid-template-columns:1fr; } .passage { columns:1; } }
@@ -1263,6 +1251,44 @@ function assembleWorksheet(
 </main>
 </body>
 </html>`;
+}
+
+// Grade-tiered fallback vocabulary used only when the AI vocab is missing or thin.
+// The AI normally pulls words from the passage; this keeps the words age-appropriate
+// (not the old easy/meta set) and frames each example with the learner's topic.
+function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][] {
+  if (high) {
+    return [
+      ["nuance", "a small but important difference in meaning", `A strong essay captures the nuance in a debate about ${theme}.`, "Nuance = a subtle shade of meaning."],
+      ["substantiate", "to support a claim with evidence", `Substantiate your point about ${theme} with a fact, not a feeling.`, "Substantiate shares a root with substance."],
+      ["inference", "a conclusion drawn from clues, not stated outright", `She made an inference about ${theme} from the data.`, "Infer = figure out from evidence."],
+      ["plausible", "believable at first, but still needing proof", "A plausible answer can still be wrong if the evidence doesn't support it.", "Pause at plausible choices and check evidence."],
+      ["synthesis", "combining ideas into a stronger whole", `His report used synthesis to connect history and ${theme}.`, "Synthesis = ideas stitched together."],
+      ["bias", "a preference that can make judgment less fair", "A chart can reveal bias in how data was collected.", "Bias bends judgment one way."],
+      ["paradox", "a statement that seems contradictory yet may be true", `Studying ${theme} has a paradox: slowing down can speed up progress.`, "Paradox = a 'both/and' puzzle."],
+      ["empirical", "based on observation or experiment, not just theory", `Empirical evidence about ${theme} comes from real measurements.`, "Empirical = you can observe it."]
+    ];
+  }
+  if (middle) {
+    return [
+      ["analyze", "to break something down to understand how it works", `We analyze how the ${theme} problem was solved, step by step.`, "Analyze = take apart to understand."],
+      ["evidence", "facts or details that support a conclusion", `Give evidence from the text to back your idea about ${theme}.`, "Evidence = the proof."],
+      ["infer", "to figure out something using clues", `Infer what the ${theme} author means, even when it isn't stated.`, "Infer = read between the lines."],
+      ["perspective", "a particular point of view", `Two fans can see the same ${theme} moment from a different perspective.`, "Perspective = the angle you see from."],
+      ["significant", "important or large enough to matter", `A significant change in the ${theme} results is worth explaining.`, "Significant = it makes a real difference."],
+      ["contrast", "to show how two things are different", `Contrast the two ${theme} strategies and pick the stronger one.`, "Contrast = spot the differences."],
+      ["summarize", "to retell the main points briefly", `Summarize the ${theme} passage in one or two sentences.`, "Summarize = the short version."],
+      ["conclude", "to decide something after thinking it through", `What can you conclude about ${theme} from the evidence?`, "Conclude = reach the end of your reasoning."]
+    ];
+  }
+  return [
+    ["describe", "to tell what something is like", `Describe one thing you notice about ${theme}.`, "Describe = paint a word picture."],
+    ["compare", "to tell how things are alike and different", `Compare two ${theme} ideas side by side.`, "Compare = check side by side."],
+    ["predict", "to make a smart guess using clues", `Predict what happens next in the ${theme} story.`, "Predict = think ahead."],
+    ["observe", "to look or watch carefully", `Observe the ${theme} picture before you answer.`, "Observe = look closely."],
+    ["explain", "to make something clear by giving reasons", `Explain why your ${theme} answer makes sense.`, "Explain = tell the why."],
+    ["pattern", "something that repeats in a regular way", `Find the pattern in the ${theme} puzzle.`, "Pattern = it repeats."]
+  ];
 }
 
 function highSchoolFallbackPassage(theme: string): string {
@@ -1931,6 +1957,90 @@ function crackTheCode(word: string): FunActivity {
   };
 }
 
+// Harder number-sequence puzzle for older learners (age 11+).
+function patternPuzzleHard(rng: () => number): FunActivity {
+  const rules = [
+    { seq: [1, 1, 2, 3, 5, 8], next: [13, 21], why: "Fibonacci — add the two numbers before it" },
+    { seq: [2, 3, 5, 7, 11], next: [13, 17], why: "prime numbers in order" },
+    { seq: [1, 3, 6, 10, 15], next: [21, 28], why: "triangular numbers — add 2, then 3, then 4 …" },
+    { seq: [2, 6, 12, 20, 30], next: [42, 56], why: "the gaps grow: +4, +6, +8, +10, +12" },
+    { seq: [1, 2, 6, 24, 120], next: [720, 5040], why: "factorials — ×2, ×3, ×4, ×5, ×6" },
+    { seq: [1, 4, 9, 16, 25], next: [36, 49], why: "perfect squares (1², 2², 3² …)" }
+  ];
+  const r = rules[Math.floor(rng() * rules.length)];
+  return {
+    html: `<p><strong>Pattern Power.</strong> Find the next two numbers and name the rule: <strong>${r.seq.join(", ")}, __, __</strong></p><div class="write"></div>`,
+    answer: `Pattern Power: ${r.next.join(" and ")} (${r.why}).`
+  };
+}
+
+// 3×3 magic square with the four corners blanked — has a unique solution (every row,
+// column, and diagonal sums to 15). A random symmetry keeps it fresh per learner.
+function magicSquare(rng: () => number): FunActivity {
+  let grid = [
+    [2, 7, 6],
+    [9, 5, 1],
+    [4, 3, 8]
+  ];
+  const t = Math.floor(rng() * 4);
+  if (t === 1) grid = grid.map((row) => [...row].reverse());
+  else if (t === 2) grid = [...grid].reverse();
+  else if (t === 3) grid = [0, 1, 2].map((c) => [0, 1, 2].map((r) => grid[r][c])); // transpose
+
+  const blanks = new Set(["0,0", "0,2", "2,0", "2,2"]);
+  const rows = grid
+    .map(
+      (row, r) =>
+        `<tr>${row
+          .map((n, c) => `<td>${blanks.has(`${r},${c}`) ? "" : n}</td>`)
+          .join("")}</tr>`
+    )
+    .join("");
+  const solution = grid.map((row) => row.join(" ")).join(" / ");
+  return {
+    html: `<p><strong>Magic Square.</strong> Fill the blank corners with numbers 1–9 (each used once) so every row, column, and diagonal adds up to <strong>15</strong>.</p><table class="ws-grid magic-square">${rows}</table>`,
+    answer: `Magic Square: ${solution} — every row, column, and diagonal sums to 15.`
+  };
+}
+
+// Caesar-shift cipher decode — more challenging than the A=1..26 code.
+function caesarCipher(word: string, rng: () => number): FunActivity {
+  const clean = (word.toUpperCase().replace(/[^A-Z]/g, "") || "PUZZLE").slice(0, 10);
+  const shift = 1 + Math.floor(rng() * 4); // 1–4
+  const coded = clean
+    .split("")
+    .map((ch) => String.fromCharCode(((ch.charCodeAt(0) - 65 + shift) % 26) + 65))
+    .join(" ");
+  return {
+    html: `<p><strong>Secret Cipher.</strong> Every letter was shifted <strong>${shift}</strong> place${shift === 1 ? "" : "s"} forward in the alphabet (Z wraps back to A). Shift each letter back to read the word:</p><p class="puzzle-code">${escapeHtml(coded)}</p><div class="write"></div>`,
+    answer: `Secret Cipher: ${clean} (shift back by ${shift}).`
+  };
+}
+
+// Small deductive-logic puzzle with a unique answer, themed to the learner's interest.
+function logicDeduction(theme: string, rng: () => number): FunActivity {
+  const pool = ["Maya", "Omar", "Leah", "Ben", "Ava", "Cy", "Nina", "Theo"];
+  const start = Math.floor(rng() * (pool.length - 2));
+  const [a, b, c] = [pool[start], pool[start + 1], pool[start + 2]];
+
+  if (rng() < 0.5) {
+    // Ordering puzzle: a is not first; c finishes right after b.
+    return {
+      html: `<p><strong>Logic Puzzle.</strong> ${a}, ${b}, and ${c} finished a ${escapeHtml(theme)} challenge in 1st, 2nd, and 3rd place.</p>
+      <p class="hint">Clues: ${a} did not finish first. ${c} finished immediately after ${b}.</p>
+      <p>Who finished in each place?</p><div class="write"></div>`,
+      answer: `Logic Puzzle: ${b} = 1st, ${c} = 2nd, ${a} = 3rd. (${c} right after ${b} forces them into 1st–2nd, so ${a} is 3rd.)`
+    };
+  }
+  // Matching puzzle: each likes a different color; b likes blue; a is not red.
+  return {
+    html: `<p><strong>Logic Puzzle.</strong> ${a}, ${b}, and ${c} each like a different ${escapeHtml(theme)} color: red, blue, or green.</p>
+      <p class="hint">Clues: ${b} likes blue. ${a} does not like red.</p>
+      <p>What color does each person like?</p><div class="write"></div>`,
+    answer: `Logic Puzzle: ${b} = blue, ${a} = green, ${c} = red. (${b} has blue, so ${a}, who isn't red, must be green, leaving red for ${c}.)`
+  };
+}
+
 function funZoneBlock(input: WorksheetInput, theme: string): { html: string; answersHtml: string } {
   const rng = seededRng(`${input.childName}|${input.interests}|${input.grade}`);
   const young = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
@@ -1944,11 +2054,13 @@ function funZoneBlock(input: WorksheetInput, theme: string): { html: string; ans
   const words = Array.from(new Set([...interestWords, "LEARN", "BRAIN", "SOLVE", "FOCUS"])).slice(0, 6);
   const firstInterest = input.interests.split(",")[0]?.trim() || "star";
 
+  // Older learners (11+) get genuine brain-teasers instead of the picture puzzles:
+  // harder sequences, a magic square, a cipher to crack, and a deduction puzzle.
   const activities: FunActivity[] = young
     ? [patternPuzzle(true, rng), spotTheDifference(), connectTheDots()]
     : elementary
       ? [patternPuzzle(false, rng), spotTheDifference(), wordSearch(words, 9, rng), crackTheCode(firstInterest)]
-      : [patternPuzzle(false, rng), wordSearch(words, 11, rng), crackTheCode(firstInterest), spotTheDifference()];
+      : [patternPuzzleHard(rng), magicSquare(rng), caesarCipher(firstInterest, rng), logicDeduction(theme, rng)];
 
   const cards = activities
     .map((a) => `<article class="card fun-card">${a.html}</article>`)
