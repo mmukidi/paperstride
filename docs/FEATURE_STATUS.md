@@ -33,10 +33,14 @@ accounts or sending learner data to a paid external API.
 - Books/reading-aware fallback generation by grade band, with stronger reading,
   vocabulary, writing, interpretation, and book-themed math instead of generic
   cross-subject scenarios
+- Movies/media-aware fallback generation by grade band, including film evidence,
+  scene interpretation, media vocabulary, review writing, and audience-data math
 - Dynamic activity/challenge section that changes on each generation instead of
   repeating the same puzzle set for identical inputs
 - Dynamic fallback reading scenarios that vary per generation when Ollama is
   unavailable or returns an incomplete passage bundle
+- Fallback reading questions and answer keys now align with the fallback passage
+  family instead of referencing stale generic passages
 - AI question validation that drops incomplete model output before rendering
 - Open, print, and download HTML actions for generated worksheets
 - Docker Compose deployment with Caddy HTTPS reverse proxy
@@ -92,6 +96,8 @@ Also verify:
   shape, fallback behavior, or asset weight changes.
 - Smoke generated worksheets should be checked for repeated fallback stories
   when using the same grade/interest inputs more than once.
+- Smoke checks must verify passage/question/answer alignment across at least
+  History, Books, Movies, Science, and one broad custom interest.
 - Server `.env` has the intended `LLM_BASE_URL`, model names, public site URL,
   and contact email.
 

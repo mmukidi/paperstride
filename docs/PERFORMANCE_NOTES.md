@@ -42,6 +42,11 @@ model warmth and worksheet depth.
 - Books/reading interests now use literature-centered fallback passages,
   vocabulary, section plans, and book-themed math, which improves relevance
   while preserving the same fast fallback path.
+- Movies/media interests now use film-analysis fallback passages, media
+  vocabulary, matching reading answers, and media-themed math without adding
+  model calls.
+- Generic high-school fallback questions now reference the generated scenario
+  instead of old coach/basketball/technology examples.
 
 ## Watch Next
 

@@ -409,6 +409,7 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
   const theme  = input.interests.split(",")[0]?.trim() || "learning";
   const history = /\b(history|historical|social studies|civics|civilization|ancient|medieval|modern|war|revolution|empire|archive|museum)\b/i.test(theme);
   const books = /\b(book|books|reading|reader|novel|novels|story|stories|literature|library|manga|comic|comics|poetry|poem)\b/i.test(theme);
+  const media = /\b(movie|movies|film|films|cinema|animation|animated|video|videos|screenplay|screenplays|director|directors|acting|actor|actors|theater|theatre|documentary|documentaries)\b/i.test(theme);
 
   const sections: BlueprintSection[] = early ? [
     { subject:"Reading Comprehension", questionCount:2, skills:["main idea","picture clues"], focus:"Short story tied to interests.", isWeakArea:false, interestConnection:`Uses ${theme} as the story setting.` },
@@ -428,6 +429,12 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     { subject:"Grammar and Writing", questionCount:4, skills:["sentences","punctuation","recommendation"], focus:"Write and revise sentences about books.", isWeakArea:false, interestConnection:`Book recommendation writing.` },
     { subject:"Math Reasoning", questionCount:2, skills:["word problems","counting groups"], focus:"Bookshelf and reading-time math.", isWeakArea:false, interestConnection:`Book-themed numbers.` },
     { subject:"Logic and Patterns", questionCount:2, skills:["sequence","reasoning"], focus:"Chapter-order and clue puzzles.", isWeakArea:false, interestConnection:`${theme} clue patterns.` },
+  ] : elem && media ? [
+    { subject:"Reading Comprehension", questionCount:5, skills:["main idea","scene details","sequence","character clues"], focus:"Movie-themed passage with evidence.", isWeakArea:false, interestConnection:`Passage about ${theme} and scene clues.` },
+    { subject:"Vocabulary in Context", questionCount:3, skills:["context clues","media words"], focus:"Words viewers use to discuss scenes.", isWeakArea:false, interestConnection:`${theme} vocabulary.` },
+    { subject:"Grammar and Writing", questionCount:4, skills:["sentences","punctuation","review"], focus:"Write and revise sentences about movies.", isWeakArea:false, interestConnection:`Movie review writing.` },
+    { subject:"Math Reasoning", questionCount:2, skills:["word problems","elapsed time"], focus:"Movie schedule and audience-count math.", isWeakArea:false, interestConnection:`Movie-themed numbers.` },
+    { subject:"Logic and Patterns", questionCount:2, skills:["sequence","reasoning"], focus:"Scene-order and clue puzzles.", isWeakArea:false, interestConnection:`${theme} scene patterns.` },
   ] : elem ? [
     { subject:"Reading Comprehension", questionCount:3, skills:["main idea","detail","vocab"],  focus:"Original passage with evidence.", isWeakArea:false, interestConnection:`Passage about ${theme}.` },
     { subject:"Vocabulary in Context",  questionCount:3, skills:["definitions","context"],       focus:"Words from the passage.",         isWeakArea:false, interestConnection:`Academic words in ${theme} context.` },
@@ -448,6 +455,12 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     { subject:"Grammar and Writing", questionCount:4, skills:["revision","sentence combining","recommendation writing"], focus:"Revise and explain a book recommendation.", isWeakArea:false, interestConnection:`Writing about ${theme}.` },
     { subject:"Math Reasoning", questionCount:3, skills:["multi-step","ratios","reading schedules"], focus:"Book-club and reading-log math.", isWeakArea:false, interestConnection:`${theme} reading log numbers.` },
     { subject:"Critical Thinking", questionCount:2, skills:["claim evidence reasoning","comparison"], focus:"Compare interpretations and defend a claim.", isWeakArea:false, interestConnection:`Text-based claims about ${theme}.` },
+  ] : middle && media ? [
+    { subject:"Reading Comprehension", questionCount:5, skills:["main idea","evidence","inference","director's purpose"], focus:"Substantial media-themed passage.", isWeakArea:false, interestConnection:`${theme} and media evidence.` },
+    { subject:"Vocabulary in Context", questionCount:3, skills:["context clues","media terms"], focus:"Terms viewers use to analyze film.", isWeakArea:false, interestConnection:`${theme} vocabulary.` },
+    { subject:"Grammar and Writing", questionCount:4, skills:["revision","sentence combining","review writing"], focus:"Revise and explain a movie review.", isWeakArea:false, interestConnection:`Writing about ${theme}.` },
+    { subject:"Math Reasoning", questionCount:3, skills:["multi-step","percentages","audience data"], focus:"Movie-club and audience-rating math.", isWeakArea:false, interestConnection:`${theme} audience numbers.` },
+    { subject:"Critical Thinking", questionCount:2, skills:["claim evidence reasoning","comparison"], focus:"Compare interpretations and defend a scene-based claim.", isWeakArea:false, interestConnection:`Media-based claims about ${theme}.` },
   ] : middle ? [
     { subject:"Reading Comprehension", questionCount:4, skills:["main idea","evidence","inference","tone"], focus:"Substantial passage with evidence.", isWeakArea:false, interestConnection:`Passage deeply tied to ${theme}.` },
     { subject:"Vocabulary in Context",  questionCount:3, skills:["context clues","shades"],                 focus:"Stronger words from passage.",      isWeakArea:false, interestConnection:`Academic vocab in ${theme} context.` },
@@ -469,6 +482,12 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     { subject:"Grammar and Writing", questionCount:4, skills:["concision","claim evidence reasoning","argument"], focus:"Book-based argument writing.", isWeakArea:false, interestConnection:`Writing about ${theme}.` },
     { subject:"Math Reasoning", questionCount:3, skills:["percentages","functions","reading-log interpretation"], focus:"Book-club quantitative reasoning.", isWeakArea:false, interestConnection:`Reading log data for ${theme}.` },
     { subject:"Critical Thinking", questionCount:3, skills:["synthesis","comparison","argument"], focus:"Compare interpretations.", isWeakArea:false, interestConnection:`Text-based interpretation of ${theme}.` },
+  ] : media ? [
+    { subject:"Reading Comprehension", questionCount:6, skills:["central claim","media evidence","inference","tone","interpretation"], focus:"Advanced passage about film and evidence.", isWeakArea:false, interestConnection:`Complex ${theme} media analysis.` },
+    { subject:"Vocabulary in Context", questionCount:4, skills:["media vocabulary","precise meaning"], focus:"Academic film and media words.", isWeakArea:false, interestConnection:`${theme} scholarly vocabulary.` },
+    { subject:"Grammar and Writing", questionCount:4, skills:["concision","claim evidence reasoning","argument"], focus:"Media-analysis argument writing.", isWeakArea:false, interestConnection:`Writing about ${theme}.` },
+    { subject:"Math Reasoning", questionCount:3, skills:["percentages","functions","audience-data interpretation"], focus:"Media quantitative reasoning.", isWeakArea:false, interestConnection:`Audience and rating data for ${theme}.` },
+    { subject:"Critical Thinking", questionCount:3, skills:["synthesis","comparison","argument"], focus:"Compare interpretations.", isWeakArea:false, interestConnection:`Scene-based interpretation of ${theme}.` },
   ] : [
     { subject:"Reading Comprehension",      questionCount:5, skills:["central claim","evidence","inference","tone"], focus:"SAT-style passages.",        isWeakArea:false, interestConnection:`Complex ${theme} texts.` },
     { subject:"Vocabulary in Context",       questionCount:3, skills:["vocabulary in context","precise meaning"],      focus:"Academic words in context.", isWeakArea:false, interestConnection:`${theme} academic vocabulary.` },
@@ -488,11 +507,11 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     totalQuestions,
     challengeProfile:   "3 confidence-builders, balanced core, 2 stretch",
     motivationStrategy: `Use ${theme} as the mission context for every section.`,
-    curriculumPath:     history ? "History and evidence-centered mixed practice" : books ? "Reading and literature-centered mixed practice" : "General standards-aligned mixed practice",
+    curriculumPath:     history ? "History and evidence-centered mixed practice" : books ? "Reading and literature-centered mixed practice" : media ? "Media analysis and evidence-centered mixed practice" : "General standards-aligned mixed practice",
     gradeExpectations:  early ? "Concrete early literacy, counting, and patterns."
-                      : elem  ? history ? "Reading comprehension, timelines, source clues, vocabulary, writing, and number sense." : books ? "Reading comprehension, story evidence, vocabulary, writing, and book-themed number sense." : "Reading comprehension, vocabulary, number sense, writing, and logic."
-                      : middle? history ? "Source reasoning, chronology, cause-and-effect, vocabulary, and clear explanations." : books ? "Text evidence, inference, vocabulary, revision, and clear book-based explanations." : "Multi-step reasoning, evidence, and clear explanations."
-                      :         history ? "Advanced historical interpretation, corroboration, causation, and argument writing." : books ? "Advanced reading interpretation, vocabulary in context, text evidence, and argument writing." : "SAT-ready reading, vocabulary in context, and algebraic reasoning.",
+                      : elem  ? history ? "Reading comprehension, timelines, source clues, vocabulary, writing, and number sense." : books ? "Reading comprehension, story evidence, vocabulary, writing, and book-themed number sense." : media ? "Reading comprehension, scene evidence, vocabulary, writing, and movie-themed number sense." : "Reading comprehension, vocabulary, number sense, writing, and logic."
+                      : middle? history ? "Source reasoning, chronology, cause-and-effect, vocabulary, and clear explanations." : books ? "Text evidence, inference, vocabulary, revision, and clear book-based explanations." : media ? "Media evidence, inference, vocabulary, revision, and clear scene-based explanations." : "Multi-step reasoning, evidence, and clear explanations."
+                      :         history ? "Advanced historical interpretation, corroboration, causation, and argument writing." : books ? "Advanced reading interpretation, vocabulary in context, text evidence, and argument writing." : media ? "Advanced media interpretation, vocabulary in context, scene evidence, and argument writing." : "SAT-ready reading, vocabulary in context, and algebraic reasoning.",
     pageTarget:         early ? "1–2 A4 pages" : elem ? "3–5 A4 pages" : middle ? "5–7 A4 pages" : "6–9 A4 pages",
     challengeLevel:     middle || !early ? "balanced" : "gentle",
     subjectMix:         sections.map(s => s.subject),

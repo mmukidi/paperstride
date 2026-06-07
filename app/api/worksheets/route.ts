@@ -91,6 +91,10 @@ function isBooksTheme(theme: string): boolean {
   return /\b(book|books|reading|reader|novel|novels|story|stories|literature|library|manga|comic|comics|poetry|poem)\b/i.test(theme);
 }
 
+function isMediaTheme(theme: string): boolean {
+  return /\b(movie|movies|film|films|cinema|animation|animated|video|videos|screenplay|screenplays|director|directors|acting|actor|actors|theater|theatre|documentary|documentaries)\b/i.test(theme);
+}
+
 type WorksheetRun = {
   seed: string;
   scenario: string;
@@ -108,7 +112,20 @@ function createWorksheetRun(input: WorksheetInput): WorksheetRun {
   const theme = input.interests.split(",")[0]?.trim() || "learning";
   const high = isHighSchoolOrAdult(input);
 
-  const scenarios = isBooksTheme(theme)
+  const scenarios = isMediaTheme(theme)
+    ? high
+      ? [
+          "a film studies seminar comparing a trailer, a review, and a scene transcript",
+          "a student festival jury deciding which short film deserves an award",
+          "a media literacy group analyzing how editing changes an audience's interpretation",
+          "a documentary team checking whether interviews, footage, and data support the same claim"
+        ]
+      : [
+          "a classroom movie club comparing characters, scenes, and clues",
+          "a storyboard team planning a short movie scene",
+          "a young reviewer choosing evidence for a movie recommendation"
+        ]
+    : isBooksTheme(theme)
     ? high
       ? [
           "a student editorial board comparing print books, audiobooks, and screen reading",
@@ -137,7 +154,9 @@ function createWorksheetRun(input: WorksheetInput): WorksheetRun {
     ? ["evaluate evidence before making a claim", "compare two plausible interpretations", "separate strong reasoning from attractive shortcuts", "show how a small detail changes the conclusion"]
     : ["find clues in order", "explain one clear reason", "notice what changed", "use evidence before guessing"];
 
-  const details = isBooksTheme(theme)
+  const details = isMediaTheme(theme)
+    ? ["camera angles", "scene notes", "audience surveys", "dialogue lines", "editing choices", "sound cues", "storyboard panels"]
+    : isBooksTheme(theme)
     ? ["margin notes", "chapter titles", "cover art", "reader reviews", "quotation cards", "library checkout records"]
     : isHistoryTheme(theme)
       ? ["dated letters", "artifact labels", "old maps", "oral histories", "newspaper clippings", "timeline cards"]
@@ -962,6 +981,15 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
         { subject: "Logic and Patterns", questionCount: 2, skills: ["sequence", "reasoning"], focus: "Chapter-order and clue puzzles." }
       ];
     }
+    if (isMediaTheme(theme)) {
+      return [
+        { subject: "Reading Comprehension", questionCount: 5, skills: ["main idea", "scene details", "sequence", "character clues"], focus: "A movie-themed passage with evidence questions." },
+        { subject: "Vocabulary in Context", questionCount: 3, skills: ["context clues", "media words", "using words"], focus: "Words viewers use to discuss scenes." },
+        { subject: "Grammar and Writing", questionCount: 4, skills: ["sentence structure", "punctuation", "clear review"], focus: "Write and revise sentences about movies." },
+        { subject: "Math Reasoning", questionCount: 2, skills: ["word problems", "elapsed time"], focus: "Movie schedule and audience-count word problems." },
+        { subject: "Logic and Patterns", questionCount: 2, skills: ["sequence", "reasoning"], focus: "Scene-order and clue puzzles." }
+      ];
+    }
     return [
       // Core
       { subject: "Reading Comprehension", questionCount: 4, skills: ["main idea", "supporting detail", "sequence", "vocabulary in context"], focus: "An original theme passage with evidence questions." },
@@ -992,6 +1020,15 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
         { subject: "Grammar and Writing", questionCount: 4, skills: ["revision", "sentence combining", "recommendation writing"], focus: "Revise and explain a book recommendation." },
         { subject: "Math Reasoning", questionCount: 3, skills: ["multi-step word problems", "ratios", "reading schedules"], focus: "Book-club and reading-log math." },
         { subject: "Critical Thinking", questionCount: 2, skills: ["claim evidence reasoning", "comparison"], focus: "Compare interpretations and defend a text-based claim." }
+      ];
+    }
+    if (isMediaTheme(theme)) {
+      return [
+        { subject: "Reading Comprehension", questionCount: 5, skills: ["main idea", "evidence", "inference", "director's purpose"], focus: "A substantial media-themed passage with evidence questions." },
+        { subject: "Vocabulary in Context", questionCount: 3, skills: ["context clues", "media terms"], focus: "Terms viewers use to analyze film." },
+        { subject: "Grammar and Writing", questionCount: 4, skills: ["revision", "sentence combining", "review writing"], focus: "Revise and explain a movie review." },
+        { subject: "Math Reasoning", questionCount: 3, skills: ["multi-step word problems", "percentages", "audience data"], focus: "Movie-club and audience-rating math." },
+        { subject: "Critical Thinking", questionCount: 2, skills: ["claim evidence reasoning", "comparison"], focus: "Compare interpretations and defend a scene-based claim." }
       ];
     }
     return [
@@ -1026,6 +1063,16 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
       { subject: "Grammar and Writing", questionCount: 4, skills: ["concision", "claim evidence reasoning", "argument"], focus: "Revision and a short book-based argument." },
       { subject: "Math Reasoning", questionCount: 3, skills: ["percentages", "functions", "reading-log interpretation"], focus: "Quantitative reasoning through book-club and reading-log scenarios." },
       { subject: "Critical Thinking", questionCount: 3, skills: ["synthesis", "comparison", "argument"], focus: "Compare interpretations and defend a claim with textual evidence." }
+    ];
+  }
+
+  if (isMediaTheme(theme)) {
+    return [
+      { subject: "Reading Comprehension", questionCount: 6, skills: ["central claim", "media evidence", "inference", "tone", "structure", "interpretation"], focus: "An advanced passage about film, media, and evidence." },
+      { subject: "Vocabulary in Context", questionCount: 4, skills: ["media vocabulary", "precise meaning"], focus: "Academic film and media words in context." },
+      { subject: "Grammar and Writing", questionCount: 4, skills: ["concision", "claim evidence reasoning", "argument"], focus: "Revision and a short media-analysis argument." },
+      { subject: "Math Reasoning", questionCount: 3, skills: ["percentages", "functions", "audience-data interpretation"], focus: "Quantitative reasoning through ratings, run time, and audience data." },
+      { subject: "Critical Thinking", questionCount: 3, skills: ["synthesis", "comparison", "argument"], focus: "Compare interpretations and defend a claim with media evidence." }
     ];
   }
 
@@ -1233,7 +1280,7 @@ function assembleWorksheet(
   const high = isHighSchoolOrAdult(input);
   const middle = !high && input.age >= 11;
   const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
-  const answerContext = { high, isSpace: isSpaceTheme };
+  const answerContext = { high, isSpace: isSpaceTheme, run };
   const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
   const strategyBlock = strategyBlockFor(input, blueprint);
   const passage = content.passageHtml
@@ -1513,6 +1560,18 @@ function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][]
       ["perspective", "a point of view shaped by experience", "A reader's perspective can affect which character feels most convincing.", "Perspective = viewpoint."]
     ];
   }
+  if (isMediaTheme(theme) && high) {
+    return [
+      ["cinematography", "the visual design of a film, including camera movement, framing, and light", "The cinematography makes the scene feel isolated before the dialogue confirms it.", "Cinema + graphy = film writing with images."],
+      ["montage", "a sequence of edited shots that compresses time or builds an idea", "The montage shows months of practice in less than a minute.", "Montage = edited sequence."],
+      ["subtext", "meaning suggested beneath the spoken words", "The subtext of the argument shows that the character is afraid, not angry.", "Subtext = under-the-surface meaning."],
+      ["framing", "the choice of what appears inside the camera shot", "Tight framing makes the audience notice the character's hesitation.", "Frame = what the camera includes."],
+      ["motif", "a repeated image, sound, or idea with meaning", "The repeated train sound becomes a motif for escape.", "Motif = meaningful repetition."],
+      ["interpretation", "an evidence-based explanation of meaning", "A strong interpretation connects editing choices to the film's central claim.", "Interpretation = meaning with proof."],
+      ["audience", "the viewers a film is made for or received by", "Audience data can show reaction, but not why a scene works.", "Audience = viewers."],
+      ["claim", "a statement that can be supported with evidence", "A media claim needs scene evidence, not just personal taste.", "Claim = point to prove."]
+    ];
+  }
   if (isBooksTheme(theme)) {
     return [
       ["chapter", "a section of a book", "The next chapter shows where the character travels.", "Chapter = book part."],
@@ -1521,6 +1580,16 @@ function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][]
       ["clue", "a detail that helps solve or understand something", "The cover picture gives a clue about the story.", "Clue = helpful detail."],
       ["summary", "a short retelling of the main ideas", "A summary tells the important parts without every detail.", "Summary = short version."],
       ["recommend", "to suggest something because it is a good choice", "The student recommends the book to a friend.", "Recommend = suggest."]
+    ];
+  }
+  if (isMediaTheme(theme)) {
+    return [
+      ["scene", "one part of a movie that happens in one place or moment", "The scene shows the character making a choice.", "Scene = movie part."],
+      ["character", "a person or figure in a story", "The main character learns from a mistake.", "Character = story person."],
+      ["setting", "where and when a story happens", "The setting is a bright kitchen in the morning.", "Setting = place and time."],
+      ["clue", "a detail that helps solve or understand something", "The music gives a clue that something surprising may happen.", "Clue = helpful detail."],
+      ["review", "a written or spoken opinion that gives reasons", "A good review explains why a movie works.", "Review = opinion with reasons."],
+      ["edit", "to choose and arrange movie parts", "The filmmaker edits the scene to make it clearer.", "Edit = choose and arrange."]
     ];
   }
   if (high) {
@@ -1581,7 +1650,11 @@ function highSchoolFallbackPassage(theme: string, run: WorksheetRun): string {
       `<p><strong>Passage A:</strong> A museum team preparing an exhibit about ${theme} faces a problem: the most dramatic source is not always the most reliable one. One visitor interview is vivid, an old map is precise, and a damaged ledger contains numbers that do not fit the official story. The team has to decide how to arrange the evidence without making the past look simpler than it was.</p>
   <p>The strongest exhibit begins by asking what each source can and cannot prove. The interview preserves memory, but memory can compress events. The map shows location, but not motives. The ledger records payments, but not the arguments behind them. When the sources disagree, the disagreement becomes useful. It shows where the real historical question lives.</p>
   <p><strong>Passage B:</strong> A careful historian would contextualize each source before drawing a conclusion. Who created it? Who was expected to read it? What pressure shaped it? A public speech may hide uncertainty because the speaker wants support. A private letter may reveal doubt, but only from one person's point of view. Corroboration turns scattered details into a stronger argument.</p>
-  <p>This kind of work matters because history is not just a list of events. It is a disciplined argument about change, continuity, causation, and evidence. A learner studying ${theme} practices the same habit needed in advanced reading: slow down, compare sources, name the limits, and make the claim only as strong as the proof allows.</p>`
+  <p>This kind of work matters because history is not just a list of events. It is a disciplined argument about change, continuity, causation, and evidence. A learner studying ${theme} practices the same habit needed in advanced reading: slow down, compare sources, name the limits, and make the claim only as strong as the proof allows.</p>
+  <p>An advanced response would not simply announce that one source is true and another is false. It would ask how each source was made, what audience it served, and which missing source would change the interpretation. If the interview, map, and ledger point in different directions, the disagreement is not a weakness in the assignment. It is the material of historical thinking.</p>
+  <p>The exhibit team finally chooses to show the conflict instead of hiding it. Visitors see the vivid memory beside the precise map and the stubborn ledger. The display teaches that a responsible claim is not the neatest story; it is the story that survives the hardest questions.</p>
+  <p>A graduate-level historian would also ask about absence. Whose account is missing from the exhibit? Which record was never preserved? What institution decided that the ledger mattered more than an oral memory? These questions do not weaken the final interpretation. They make it more honest by showing the boundary between what the archive proves and what it only suggests.</p>
+  <p>That boundary is where advanced historical writing becomes precise. The writer can argue that one explanation is strongest while still naming the evidence that would be needed to challenge it.</p>`
     ]);
   }
 
@@ -1598,10 +1671,28 @@ function highSchoolFallbackPassage(theme: string, run: WorksheetRun): string {
     ]);
   }
 
+  if (isMediaTheme(theme)) {
+    return variantFromRun(run, "media-high", [
+      `<p><strong>Passage A:</strong> In ${escapeHtml(run.scenario)}, the central question is not whether the film is entertaining. The harder question is how a viewer can prove an interpretation. One student argues that a scene is about loyalty because the dialogue mentions friendship. Another argues that the same scene is really about control because the camera keeps one character higher in the frame while the other is partly hidden by a doorway. A third student pauses the scene and asks which evidence is strongest: the words, the framing, the music, or the edit.</p>
+  <p>The class studies ${escapeHtml(run.detail)} and notices that film evidence works differently from a printed paragraph. A line of dialogue can state one thing while lighting suggests another. A fast cut can make a choice feel urgent, while a long silence can make the audience uncomfortable. Sound can guide attention before the viewer understands why. Because film combines image, sound, performance, and sequence, a strong media analysis has to name the specific technique and explain its effect.</p>
+  <p><strong>Passage B:</strong> Audience reaction can help, but it is not enough by itself. If a survey says that 72 percent of viewers found a scene suspenseful, the number shows a pattern of response. It does not prove what caused the response. A careful analyst asks whether the suspense came from the music, the editing rhythm, the actor's expression, or information the audience had that the character did not. The strongest claim connects audience data to visible or audible evidence from the film.</p>
+  <p>This is why movies can be serious academic material. They train the viewer to separate preference from interpretation. "I liked the ending" is a reaction; "the ending withholds closure by repeating the opening image in a darker setting" is a claim that can be tested. For a Master's-level learner interested in ${theme}, the task is to move beyond summary and opinion toward an argument: identify the technique, connect it to meaning, consider a competing interpretation, and decide what the evidence actually supports.</p>
+  <p>That habit transfers beyond film. In reading, research, and public debate, strong thinkers ask the same questions: What is the claim? What evidence supports it? What else could explain the pattern? What detail would change the conclusion? A movie scene becomes more than entertainment when it becomes practice in disciplined interpretation.</p>`,
+      `<p><strong>Passage A:</strong> A documentary team preparing a short film about ${theme} has hours of interviews, location footage, and audience notes. At first, the story seems obvious: one speaker gives an emotional quote that could become the opening line. But a second interview complicates the claim, and the raw footage shows a detail the first speaker never mentions. The editor has to decide whether to build a simple story or a more honest one.</p>
+  <p>The team reviews ${escapeHtml(run.detail)} and creates an evidence chart. Interview clips show perspective. Archival footage shows what was visible at the time. Audience notes show which moments confused viewers. None of these sources is complete alone. A documentary can mislead even when every clip is real, because selection and sequence shape meaning. Leaving out a hesitation, moving a quote earlier, or adding music can change how viewers judge a person.</p>
+  <p><strong>Passage B:</strong> Responsible media analysis therefore treats editing as argument. A cut is not only a technical move; it tells the audience what belongs together. A close-up can invite sympathy, but it can also narrow attention. A narrator can clarify context, but the narrator can also overstate certainty. The viewer's job is to ask how the film earns trust and where that trust should be limited.</p>
+  <p>For a Master's-level learner, ${theme} can support sophisticated reasoning because film is built from evidence choices. The best response does not merely praise the documentary or attack it. It identifies the claim, names the techniques that support the claim, checks whether the evidence is sufficient, and acknowledges what a skeptical viewer might ask next.</p>
+  <p>In that sense, watching carefully is close to reading carefully. Both require patience with detail, attention to structure, and a willingness to revise an interpretation when new evidence appears.</p>
+  <p>The team's final edit includes the emotional quote, but it no longer lets the quote control the whole story. The editor places it beside a quieter interview, a contradictory shot, and a caption explaining what the audience cannot know from the footage alone. That choice makes the film less simple but more honest.</p>
+  <p>A strong viewer should notice that honesty. The question is not whether the documentary feels persuasive, but how it builds persuasion and whether the evidence deserves the trust the film asks for. That final judgment requires both close attention to craft and skepticism about what remains outside the frame.</p>`
+    ]);
+  }
+
   return `<p><strong>Passage A:</strong> In ${escapeHtml(run.scenario)}, students are asked to ${escapeHtml(run.angle)}. The assignment sounds simple until the group realizes that the first explanation is not always the best one. One student notices ${escapeHtml(run.detail)}. Another wants to move quickly and choose the answer that feels obvious. A third asks for proof that can be checked by someone else.</p>
   <p>The group builds a small evidence board. They separate facts from guesses, label which details came from reading, and mark which numbers came from calculation. This process slows them down at first, but it prevents a common mistake: treating a confident answer as a correct answer. Confidence can help a learner begin; evidence helps the learner know whether the answer deserves to stay.</p>
-  <p><strong>Passage B:</strong> The same habit works across subjects. In reading, a student checks whether a claim is supported by the passage. In math, the student checks whether the units and operations match the situation. In science, the student asks what changed and what stayed the same. In writing, the student revises a sentence until the reason is clear.</p>
-  <p>For a learner interested in ${theme}, the point is not to make every question sound the same. The point is to use the interest as a doorway into stronger thinking. Each new worksheet should feel like a new case: different details, different evidence, and a different reason to slow down before choosing an answer.</p>`;
+  <p><strong>Passage B:</strong> The same habit works across subjects. In reading, a student checks whether a claim is supported by the passage. In math, the student checks whether the units and operations match the situation. In science, the student asks what changed and what stayed the same. In writing, the student revises a sentence until the reason is clear. A Master's-level learner should also ask what kind of evidence is missing and what alternate explanation could still be true.</p>
+  <p>For a learner interested in ${theme}, the point is not to make every question sound the same. The point is to use the interest as a doorway into stronger thinking. Each new worksheet should feel like a new case: different details, different evidence, and a different reason to slow down before choosing an answer.</p>
+  <p>A strong response should do more than repeat the passage. It should state a precise claim, identify the detail that supports it, explain why that detail matters, and consider what would make the claim weaker. This is the difference between finishing a worksheet and practicing advanced reasoning.</p>`;
 }
 
 function middleSchoolFallbackPassage(theme: string, interests: string, run: WorksheetRun): string {
@@ -1673,7 +1764,7 @@ function elementaryFallbackPassage(theme: string, interests: string, run: Worksh
   <p>Math helps the team compare results. If one test lasts 12 minutes and the next lasts 18 minutes, the learner can measure the difference. If a pattern changes by the same amount each time, the learner can predict what may come next. The final conclusion should use evidence from the passage, numbers from the test, and one clear explanation. The goal is not to be perfect right away. The goal is to notice clues, explain thinking, and choose the next smart step.</p>`;
 }
 
-type AnswerContext = { high: boolean; isSpace: boolean };
+type AnswerContext = { high: boolean; isSpace: boolean; run: WorksheetRun };
 type FallbackQuestion = { section: string; text: string; number: number; indexInSection: number };
 
 function fallbackAnswerFor(question: FallbackQuestion, theme: string, ctx: AnswerContext): string {
@@ -1749,6 +1840,42 @@ function fallbackExplanationFor(question: FallbackQuestion, theme: string, ctx: 
 }
 
 function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): string {
+  if (isHistoryTheme(theme) && ctx.high) {
+    const answers = [
+      "The central claim is that advanced history requires corroborating sources, naming limits, and making claims only as strong as the evidence allows.",
+      "A strong answer can use the interview, map, ledger, petition, budget, speech, or other source named in the passage, as long as it explains what that source can and cannot prove.",
+      "Source limits matter because every record is shaped by who created it, what it includes, what it omits, and what pressure surrounded it.",
+      "Corroboration strengthens a historical claim by checking one source against another instead of trusting the most dramatic source alone.",
+      "A simple explanation is weak when it credits one person, source, or event without testing competing causes or missing evidence.",
+      "The passage shows that responsible historical interpretation is disciplined: compare sources, contextualize evidence, and admit uncertainty where the archive is incomplete."
+    ];
+    return answers[index] || "Use a specific source from the passage and explain how it supports or limits the historical claim.";
+  }
+
+  if (isMediaTheme(theme) && ctx.high) {
+    const answers = [
+      "The central claim is that strong movie analysis must prove an interpretation with specific film evidence, not just personal reaction.",
+      `A strong detail is the discussion of ${ctx.run.detail}, because it shows that film meaning can come from visible or audible technique, not only plot summary.`,
+      "Audience reaction can show a pattern, but it does not prove the cause; the analyst still needs scene evidence such as editing, framing, sound, or performance.",
+      "A weak media claim would say only that the movie was exciting, boring, or good without naming a technique or scene detail that supports the view.",
+      "A competing interpretation matters because the same scene detail can support more than one plausible meaning; strong analysis weighs which reading has better evidence.",
+      "The final paragraph connects movie analysis to advanced reasoning by emphasizing claim, evidence, alternate explanations, and disciplined interpretation."
+    ];
+    return answers[index] || "Use a specific scene detail from the passage and explain how it supports the interpretation.";
+  }
+
+  if (isMediaTheme(theme)) {
+    const answers = [
+      "The main idea is that viewers should use scene clues and evidence to explain what a movie means.",
+      "A viewer can use dialogue, music, camera angles, setting, character actions, or editing as clues.",
+      "A movie review needs a scene detail because the detail proves the opinion instead of just stating it.",
+      "Good viewers go back to the scene and find the clue that supports each idea.",
+      "Open response. A strong sentence names a movie or scene and gives a clear reason.",
+      "Open response. A good question asks about a character, scene, setting, or why the filmmaker made a choice."
+    ];
+    return answers[index] || "Use evidence from the movie passage and explain your thinking.";
+  }
+
   if (isBooksTheme(theme) && ctx.high) {
     const answers = [
       "The central claim is that strong reading is evidence-based: a reader should make an interpretation, support it with text details, and explain why the details matter.",
@@ -1775,12 +1902,12 @@ function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): str
 
   if (ctx.high) {
     const answers = [
-      "The central claim is that improvement comes from feedback specific enough to change the next attempt; tools can speed feedback but cannot replace human judgment.",
-      "The strongest evidence is the point that a device can show a student answered quickly but cannot tell whether the student truly understood the passage.",
-      "As used here, disciplined most nearly means self-controlled and steady, treating mistakes as useful evidence rather than as failure.",
-      "The basketball example shows that vague feedback like shoot better gives no guidance, while specific feedback that can be tested actually helps.",
-      "A trap answer credits a single hero, talent, or invention as the only cause; it sounds reasonable but the passage argues against single-cause explanations.",
-      "The final paragraph refines the argument by applying it to the reader's own interest: interest supplies energy, but strategy in the stretch zone turns it into progress."
+      "The central claim is that strong reasoning separates facts from guesses and uses checkable evidence before accepting an answer.",
+      `A strong detail is that one student notices ${ctx.run.detail} while another asks for proof that can be checked by someone else.`,
+      "The evidence board matters because it separates facts, guesses, reading details, and numbers before the group chooses an answer.",
+      "The passage warns against treating confidence as correctness; an answer deserves trust only when the evidence supports it.",
+      "A strong advanced response should state a claim, identify supporting evidence, explain why the evidence matters, and consider what could weaken the claim.",
+      "The final paragraph explains that each worksheet should feel like a new case with different details and a new reason to slow down."
     ];
     return answers[index] || "Answer from the passage and point to the sentence that proves it.";
   }
@@ -1810,10 +1937,12 @@ function mathAnswerFor(text: string): string | null {
   if (/petitions in 1888/i.test(text)) return "The petitions came first; that timing could mean public demand shaped later speeches and budgets.";
   if (/4 shelves with 6 artifacts/i.test(text)) return "24 artifacts.";
   if (/4 rows with 6 books/i.test(text)) return "24 books.";
+  if (/4 rows with 6 panels/i.test(text)) return "24 panels.";
   if (/1908 and .*1912/i.test(text)) return "4 years later.";
   if (/1908, 1912, 1916/i.test(text)) return "1920. The pattern adds 4 years.";
   if (/12 source cards/i.test(text)) return "27 source cards.";
   if (/bookmark costs \$8/i.test(text)) return "$56, with $4 change from $60.";
+  if (/movie ticket costs \$8/i.test(text)) return "$56, with $4 change from $60.";
   if (/Mission Data table/i.test(text)) return "Full strategy had the best accuracy at 83 percent.";
   if (/4 sets of 6/i.test(text)) return "24 cards.";
   if (/3, 6, 12, 24/i.test(text)) return "48 and 96.";
@@ -1823,6 +1952,8 @@ function mathAnswerFor(text: string): string | null {
   if (/budget of \$360/i.test(text)) return "9 panels.";
   if (/f\(x\) = 3x \+ 7/i.test(text)) return "x = 15.";
   if (/study time rising from 20 to 50/i.test(text)) return "5 percentage points per 10 minutes.";
+  if (/viewing time rising from 20 to 50/i.test(text)) return "5 percentage points per 10 minutes.";
+  if (/practice time rising from 20 to 50/i.test(text)) return "5 percentage points per 10 minutes.";
   return null;
 }
 
@@ -1833,10 +1964,12 @@ function mathExplanationFor(text: string): string | null {
   if (/petitions in 1888/i.test(text)) return "Chronology matters because an earlier petition could have influenced a later speech or budget decision.";
   if (/4 shelves with 6 artifacts/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
   if (/4 rows with 6 books/i.test(text)) return "There are 4 equal rows with 6 books in each row, so 4 x 6 = 24.";
+  if (/4 rows with 6 panels/i.test(text)) return "There are 4 equal rows with 6 panels in each row, so 4 x 6 = 24.";
   if (/1908 and .*1912/i.test(text)) return "Subtract 1908 from 1912 to find 4 years.";
   if (/1908, 1912, 1916/i.test(text)) return "Each date is 4 years later, so 1916 + 4 = 1920.";
   if (/12 source cards/i.test(text)) return "Add the two days: 12 + 15 = 27.";
   if (/bookmark costs \$8/i.test(text)) return "Seven bookmarks cost 7 x 8 = 56 dollars, and 60 - 56 = 4 dollars left.";
+  if (/movie ticket costs \$8/i.test(text)) return "Seven tickets cost 7 x 8 = 56 dollars, and 60 - 56 = 4 dollars left.";
   if (/Mission Data table/i.test(text)) return "Compare the Accuracy column: 68 percent, 77 percent, and 83 percent. The largest number is 83 percent.";
   if (/4 sets of 6/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
   if (/3, 6, 12, 24/i.test(text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
@@ -1846,6 +1979,8 @@ function mathExplanationFor(text: string): string | null {
   if (/budget of \$360/i.test(text)) return "8 sensors cost 8 x 18 = 144; 360 - 144 = 216 left; 216 / 24 = 9 panels.";
   if (/f\(x\) = 3x \+ 7/i.test(text)) return "Set 3x + 7 = 52, so 3x = 45 and x = 15.";
   if (/study time rising from 20 to 50/i.test(text)) return "From 20 to 50 minutes is three 10-minute steps; accuracy rises 68 to 83, a 15-point gain, so 15 / 3 = 5 points per 10 minutes.";
+  if (/viewing time rising from 20 to 50/i.test(text)) return "From 20 to 50 minutes is three 10-minute steps; accuracy rises 68 to 83, a 15-point gain, so 15 / 3 = 5 points per 10 minutes.";
+  if (/practice time rising from 20 to 50/i.test(text)) return "From 20 to 50 minutes is three 10-minute steps; accuracy rises 68 to 83, a 15-point gain, so 15 / 3 = 5 points per 10 minutes.";
   return null;
 }
 
@@ -1878,10 +2013,12 @@ function mathChoicesFor(question: { section: string; text: string }): string[] |
   if (/petitions in 1888/i.test(text)) return ["The petition", "The speech", "The budget growth", "They happened together"];
   if (/4 shelves with 6 artifacts/i.test(text)) return ["10", "20", "24", "30"];
   if (/4 rows with 6 books/i.test(text)) return ["10", "20", "24", "30"];
+  if (/4 rows with 6 panels/i.test(text)) return ["10", "20", "24", "30"];
   if (/1908 and .*1912/i.test(text)) return ["2", "4", "8", "12"];
   if (/1908, 1912, 1916/i.test(text)) return ["1918", "1920", "1922", "1924"];
   if (/12 source cards/i.test(text)) return ["17", "25", "27", "30"];
   if (/bookmark costs \$8/i.test(text)) return ["$48, $12 change", "$56, $4 change", "$60, $0 change", "$64, $4 change"];
+  if (/movie ticket costs \$8/i.test(text)) return ["$48, $12 change", "$56, $4 change", "$60, $0 change", "$64, $4 change"];
   if (/Mission Data table/i.test(text)) return ["Quick review", "Evidence notes", "Full strategy", "They were all the same"];
   if (/4 sets of 6/i.test(text)) return ["18", "24", "10", "36"];
   if (/3, 6, 12, 24/i.test(text)) return ["36 and 48", "48 and 96", "30 and 36", "48 and 72"];
@@ -1891,6 +2028,8 @@ function mathChoicesFor(question: { section: string; text: string }): string[] |
   if (/budget of \$360/i.test(text)) return ["7 panels", "9 panels", "12 panels", "15 panels"];
   if (/f\(x\) = 3x \+ 7/i.test(text)) return ["x = 12", "x = 15", "x = 18", "x = 20"];
   if (/study time rising from 20 to 50/i.test(text)) return ["3 points", "5 points", "7.5 points", "15 points"];
+  if (/viewing time rising from 20 to 50/i.test(text)) return ["3 points", "5 points", "7.5 points", "15 points"];
+  if (/practice time rising from 20 to 50/i.test(text)) return ["3 points", "5 points", "7.5 points", "15 points"];
   return null;
 }
 
@@ -1947,11 +2086,11 @@ function fallbackQuestionBanks(args: {
   const reading = history && high
     ? [
         "Which statement best captures the central claim of the passage about historical evidence?",
-        "Which source from the passage would best corroborate the claim that families helped shape school expansion?",
-        "In Passage B, why does chronology change the strength of a historical explanation?",
-        "Which interpretation is plausible but incomplete unless tested against additional evidence?",
-        "How does the author's discussion of uncertainty refine the argument about historical scholarship?",
-        "Which sentence best shows that historical causation can involve several overlapping forces?"
+        "Choose one source from the passage and explain what it can prove and what it cannot prove.",
+        "Why does the passage warn readers to examine who created a source and what pressure shaped it?",
+        "How does corroboration strengthen a historical claim?",
+        "Which kind of simple explanation does the passage treat as historically weak?",
+        "How does the final paragraph refine the idea of responsible historical interpretation?"
       ]
     : history && middle
       ? [
@@ -1980,6 +2119,24 @@ function fallbackQuestionBanks(args: {
               "Which answer would be a weak literary claim because it relies mostly on personal preference?",
               "How does the final paragraph connect books to advanced argument skills?"
             ]
+          : isMediaTheme(theme) && high
+            ? [
+                "Which statement best captures the central claim of the passage about movie analysis?",
+                "Which detail from the passage best shows that film meaning can come from technique rather than plot alone?",
+                "Why is audience reaction not enough to prove what caused a scene to work?",
+                "Which answer would be a weak media claim because it relies mostly on personal reaction?",
+                "Why does the passage ask the viewer to consider a competing interpretation?",
+                "How does the final paragraph connect movie analysis to advanced reasoning?"
+              ]
+            : isMediaTheme(theme)
+              ? [
+                  "What is the main idea of the passage about movies? Point to one detail that proves it.",
+                  "Name one scene clue a viewer can use while watching.",
+                  "Why does a movie review need a detail from the scene?",
+                  "What does a good viewer do when two people disagree about a movie?",
+                  "Write one sentence recommending a movie or scene and include one reason.",
+                  "What question would you ask before judging a movie scene?"
+                ]
           : books
             ? [
                 "What is the main idea of the passage about books? Point to one detail that proves it.",
@@ -1992,11 +2149,11 @@ function fallbackQuestionBanks(args: {
             : high
     ? [
         "Which statement best captures the central claim of the passage?",
-        "Which sentence from the passage gives the strongest evidence that technology can support judgment without replacing it?",
-        "In paragraph 3, the word disciplined most nearly means which of the following?",
-        "The author mentions basketball primarily to illustrate which idea about strategy?",
-        "Which answer choice is a trap answer because it is true in general but not supported by the passage?",
-        "How does the final paragraph refine the argument made earlier in the passage?"
+        `Which detail from the passage best shows why ${theme} needs checkable evidence instead of a quick guess?`,
+        "Why does the group build an evidence board before choosing an answer?",
+        "What mistake does the passage warn against when a learner feels confident?",
+        "What should a strong advanced response include after it states a claim?",
+        "How does the final paragraph explain why repeated worksheets should feel different?"
       ]
     : [
         `What is the main idea of the passage about ${theme}? Point to the sentence that proves it.`,
@@ -2034,6 +2191,13 @@ function fallbackQuestionBanks(args: {
           "The function f(x) = 3x + 7 models discussion points earned after x completed chapters. If f(x) = 52, what is x?",
           "A reading log shows study time rising from 20 to 50 minutes while quiz accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?"
         ]
+      : isMediaTheme(theme) && high
+        ? [
+            "A film club analyzes 42 of 60 scenes in week one and improves the analysis rate by 15 percentage points in week two. What is the week two analysis rate?",
+            "A short-film showcase has a budget of $360. Microphones cost $18 each and poster panels cost $24 each. If the group buys 8 microphones, how many poster panels can it buy with the remaining budget?",
+            "The function f(x) = 3x + 7 models critique points earned after x completed scene analyses. If f(x) = 52, what is x?",
+            "An audience study shows viewing time rising from 20 to 50 minutes while interpretation accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?"
+          ]
       : books
         ? [
             "A shelf has 4 rows with 6 books on each row. How many books are there in all?",
@@ -2042,6 +2206,14 @@ function fallbackQuestionBanks(args: {
             "A bookmark costs $8. How much do 7 bookmarks cost? Then find the change from $60.",
             "There are 30 minutes for 5 reading stations. How many minutes can each station take?"
           ]
+        : isMediaTheme(theme)
+          ? [
+              "A storyboard has 4 rows with 6 panels on each row. How many panels are there in all?",
+              "A reviewer watches 12 minutes on Monday and 15 minutes on Tuesday. How many minutes did the reviewer watch in all?",
+              "A scene pattern goes 3, 6, 12, 24, ___, ___. What are the next two numbers, and what is the rule?",
+              "A movie ticket costs $8. How much do 7 tickets cost? Then find the change from $60.",
+              "There are 30 minutes for 5 movie stations. How many minutes can each station take?"
+            ]
     : history
       ? [
           "A museum has 4 shelves with 6 artifacts on each shelf. How many artifacts are there in all?",
@@ -2049,13 +2221,13 @@ function fallbackQuestionBanks(args: {
           "A timeline goes 1908, 1912, 1916, ___. What year comes next if the pattern continues?",
           "A class reads 12 source cards on Monday and 15 on Tuesday. How many source cards did they read in all?",
           "There are 30 minutes for 5 history stations. How many minutes can each station take?"
-        ]
-      : high
+      ]
+    : high
     ? [
-        "A training app shows that a player made 42 of 60 shots in week one and improved the success rate by 15 percentage points in week two. What was the week two success rate?",
-        "A robotics club has a fixed budget of $360. Sensors cost $18 each and practice field panels cost $24 each. If the club buys 8 sensors, how many panels can it buy with the remaining budget?",
-        "The function f(x) = 3x + 7 models points earned after x completed missions. If f(x) = 52, what is x?",
-        "A data table shows study time rising from 20 to 50 minutes while accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?"
+        `A ${theme} practice log shows 42 of 60 tasks completed accurately in week one and improves the success rate by 15 percentage points in week two. What is the week two success rate?`,
+        `A ${theme} showcase has a budget of $360. Setup kits cost $18 each and display panels cost $24 each. If the group buys 8 setup kits, how many panels can it buy with the remaining budget?`,
+        `The function f(x) = 3x + 7 models points earned after x completed ${theme} analysis tasks. If f(x) = 52, what is x?`,
+        `A ${theme} study table shows practice time rising from 20 to 50 minutes while accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?`
       ]
     : [
         `A ${theme} team scores 4 points in each of 6 rounds. How many points in all? Show your setup.`,

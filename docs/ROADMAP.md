@@ -56,6 +56,8 @@ No worksheet data ever leaves the server.
   source-analysis and argument tasks when the interest is History
 - Books/reading interests bias fallback output toward literature, text evidence,
   vocabulary, writing, interpretation, and book-themed quantitative reasoning
+- Movies/media interests bias fallback output toward scene evidence,
+  interpretation, media vocabulary, review writing, and audience-data reasoning
 - Answer sheet with explanations, watch-outs, and next-time tips
 - Print / Download / Open buttons
 
@@ -221,7 +223,7 @@ See `docs/oracle-cloud-deployment.md` for full details.
 | Model reloads between calls | every swap | none (`keep_alive: -1`) |
 | Section AI coverage | ~20% (reading only) | 100% (all sections) |
 | Concurrent users | 1 cleanly | 2 (`OLLAMA_NUM_PARALLEL=2`, server-side) |
-| Fallback quality | Generic interest theme | Grade-aware, history/books-specific banks with per-run variation |
+| Fallback quality | Generic interest theme | Grade-aware history/books/media banks with aligned questions and per-run variation |
 
 ### Biggest remaining lever: the Oracle shape
 Inference speed scales with cores. **Confirm the A1.Flex instance is using the full
