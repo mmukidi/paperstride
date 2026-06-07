@@ -36,6 +36,12 @@ model warmth and worksheet depth.
   so repeated worksheets no longer reuse the exact same puzzle logic.
 - High school, college, and Master's history worksheets now use advanced
   source-analysis challenge cards instead of child-style fun puzzles.
+- Repeated fallback reading passages now receive a per-generation scenario key,
+  so fallback mode varies the story, details, and reasoning angle without adding
+  model calls.
+- Books/reading interests now use literature-centered fallback passages,
+  vocabulary, section plans, and book-themed math, which improves relevance
+  while preserving the same fast fallback path.
 
 ## Watch Next
 

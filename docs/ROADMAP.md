@@ -54,6 +54,8 @@ No worksheet data ever leaves the server.
 - Fun Zone: pattern puzzles, word search, spot the difference, crack the code
 - Extension Challenge replaces Fun Zone for high-school/adult outputs, with
   source-analysis and argument tasks when the interest is History
+- Books/reading interests bias fallback output toward literature, text evidence,
+  vocabulary, writing, interpretation, and book-themed quantitative reasoning
 - Answer sheet with explanations, watch-outs, and next-time tips
 - Print / Download / Open buttons
 
@@ -127,6 +129,8 @@ Performance levers, all baked into the request (no server config needed):
 - **Blueprint cache** — identical inputs return the preview instantly (1 h TTL).
 - **Grade-aware deterministic banks** — stronger fallback quality without extra
   model calls, now including history-specific source and timeline work.
+- **Per-generation fallback variation** — when local AI misses a passage, the
+  fallback story and question lens still change on each request.
 
 Resilience preserved: if the batched call fails or omits a subject, that subject is
 retried individually, then falls back to the deterministic bank. The worksheet always
@@ -217,7 +221,7 @@ See `docs/oracle-cloud-deployment.md` for full details.
 | Model reloads between calls | every swap | none (`keep_alive: -1`) |
 | Section AI coverage | ~20% (reading only) | 100% (all sections) |
 | Concurrent users | 1 cleanly | 2 (`OLLAMA_NUM_PARALLEL=2`, server-side) |
-| Fallback quality | Generic interest theme | Grade-aware, history-specific banks for source reasoning |
+| Fallback quality | Generic interest theme | Grade-aware, history/books-specific banks with per-run variation |
 
 ### Biggest remaining lever: the Oracle shape
 Inference speed scales with cores. **Confirm the A1.Flex instance is using the full

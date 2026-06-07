@@ -87,6 +87,70 @@ function isHistoryTheme(theme: string): boolean {
   return /\b(history|historical|social studies|civics|civilization|ancient|medieval|modern|war|revolution|empire|archive|museum)\b/i.test(theme);
 }
 
+function isBooksTheme(theme: string): boolean {
+  return /\b(book|books|reading|reader|novel|novels|story|stories|literature|library|manga|comic|comics|poetry|poem)\b/i.test(theme);
+}
+
+type WorksheetRun = {
+  seed: string;
+  scenario: string;
+  angle: string;
+  detail: string;
+};
+
+function pickOne<T>(items: T[], rng: () => number): T {
+  return items[Math.floor(rng() * items.length)] ?? items[0];
+}
+
+function createWorksheetRun(input: WorksheetInput): WorksheetRun {
+  const seed = `${Date.now()}|${Math.random().toString(36).slice(2)}|${input.grade}|${input.age}|${input.interests}`;
+  const rng = seededRng(seed);
+  const theme = input.interests.split(",")[0]?.trim() || "learning";
+  const high = isHighSchoolOrAdult(input);
+
+  const scenarios = isBooksTheme(theme)
+    ? high
+      ? [
+          "a student editorial board comparing print books, audiobooks, and screen reading",
+          "a school library committee deciding which books belong in a themed display",
+          "a literature circle tracking how annotations change interpretation",
+          "a teen reviewer comparing a novel, a graphic adaptation, and a film version"
+        ]
+      : [
+          "a class book club choosing clues from a favorite story",
+          "a library scavenger hunt using covers, chapters, and character notes",
+          "a young reader building a bookshelf recommendation chart"
+        ]
+    : isHistoryTheme(theme)
+      ? [
+          "an archive case with letters, maps, photographs, and conflicting memories",
+          "a museum exhibit team deciding which evidence belongs in a timeline",
+          "a local-history project comparing an interview, a newspaper clipping, and an artifact"
+        ]
+      : [
+          `a project team turning ${theme} into a real investigation`,
+          `a student group testing a new idea connected to ${theme}`,
+          `a classroom challenge where ${theme} becomes the example for reading, math, and reasoning`
+        ];
+
+  const angles = high
+    ? ["evaluate evidence before making a claim", "compare two plausible interpretations", "separate strong reasoning from attractive shortcuts", "show how a small detail changes the conclusion"]
+    : ["find clues in order", "explain one clear reason", "notice what changed", "use evidence before guessing"];
+
+  const details = isBooksTheme(theme)
+    ? ["margin notes", "chapter titles", "cover art", "reader reviews", "quotation cards", "library checkout records"]
+    : isHistoryTheme(theme)
+      ? ["dated letters", "artifact labels", "old maps", "oral histories", "newspaper clippings", "timeline cards"]
+      : ["notebook evidence", "trial results", "comparison cards", "design sketches", "practice records"];
+
+  return {
+    seed,
+    scenario: pickOne(scenarios, rng),
+    angle: pickOne(angles, rng),
+    detail: pickOne(details, rng)
+  };
+}
+
 // Ollama-only backend — no external API dependency, no rate limits.
 // All inference runs on the local Oracle Cloud server.
 // We use Ollama's NATIVE /api/chat (not the OpenAI-compat /v1) so we can pin keep_alive,
@@ -221,15 +285,16 @@ async function createHtmlWorksheetWithOllama(
   input: WorksheetInput,
   prebuiltBlueprint: LearningBlueprint | null
 ): Promise<string> {
+  const run = createWorksheetRun(input);
   // Skip blueprint LLM call if the frontend already computed it (plan preview flow).
   const blueprint = prebuiltBlueprint ?? await createLearningBlueprint(input);
 
   try {
-    const html = await createStagedWorksheetHtml(input, blueprint);
+    const html = await createStagedWorksheetHtml(input, blueprint, run);
     return injectNickname(html, input.childName);
   } catch (error) {
     console.warn("Staged worksheet generation failed; using quality fallback", error);
-    return createFallbackHtmlWorksheet(input, blueprint);
+    return createFallbackHtmlWorksheet(input, blueprint, run);
   }
 }
 
@@ -238,7 +303,8 @@ async function createHtmlWorksheetWithOllama(
 // failure, so a thin or rate-limited response only affects that one section.
 async function createStagedWorksheetHtml(
   input: WorksheetInput,
-  blueprint: LearningBlueprint
+  blueprint: LearningBlueprint,
+  run: WorksheetRun
 ): Promise<string> {
   const content: WorksheetContent = { sectionQuestions: {} };
 
@@ -249,7 +315,7 @@ async function createStagedWorksheetHtml(
   // the passage and the questions about it always stay consistent.
   if (wantsReading || vocabSection) {
     try {
-      const bundle = await generatePassageBundle(input, blueprint);
+      const bundle = await generatePassageBundle(input, blueprint, run);
       content.passageHtml = bundle.passageHtml;
       content.vocab = bundle.vocab.length ? bundle.vocab : undefined;
       content.readingQuestions = bundle.readingQuestions.length ? bundle.readingQuestions : undefined;
@@ -274,7 +340,7 @@ async function createStagedWorksheetHtml(
 
   if (sectionsToGenerate.length) {
     try {
-      const batched = await generateAllSections(input, blueprint, sectionsToGenerate);
+      const batched = await generateAllSections(input, blueprint, sectionsToGenerate, run);
       for (const section of sectionsToGenerate) {
         const questions = batched[section.subject];
         if (questions?.length) content.sectionQuestions![section.subject] = questions;
@@ -287,7 +353,7 @@ async function createStagedWorksheetHtml(
     for (const section of sectionsToGenerate) {
       if (content.sectionQuestions![section.subject]?.length) continue;
       try {
-        const questions = await generateSectionQuestions(input, blueprint, section);
+        const questions = await generateSectionQuestions(input, blueprint, section, run);
         if (questions.length) content.sectionQuestions![section.subject] = questions;
       } catch (error) {
         console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
@@ -295,12 +361,13 @@ async function createStagedWorksheetHtml(
     }
   }
 
-  return assembleWorksheet(input, blueprint, content);
+  return assembleWorksheet(input, blueprint, content, run);
 }
 
 async function generatePassageBundle(
   input: WorksheetInput,
-  blueprint: LearningBlueprint
+  blueprint: LearningBlueprint,
+  run: WorksheetRun
 ): Promise<{ passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[] }> {
   const profile = qualityProfileFor(input);
   const readingCount = blueprint.sections.find((s) => s.subject === "Reading Comprehension")?.questionCount ?? 4;
@@ -311,7 +378,7 @@ async function generatePassageBundle(
 
   const content = await groqChat({
     model: PASSAGE_MODEL,                 // 7B by default for prose quality
-    temperature: 0.5,
+    temperature: 0.68,
     maxTokens: 1700,
     timeoutMs: LLM_PASSAGE_TIMEOUT_MS,
     responseFormat: "json_object",
@@ -329,9 +396,15 @@ Learner:
 - Grade or level: ${input.grade}
 - Age: ${input.age}
 - Interest themes: ${input.interests}
+- Freshness key: ${run.seed.slice(0, 18)} (use only to vary the content; do not print it)
+- Fresh scenario lens: ${run.scenario}
+- Fresh reasoning angle: ${run.angle}
+- Concrete detail to include naturally: ${run.detail}
 
 Requirements:
 - The passage must be original, engaging, and tied to the interests, at least ${profile.minReadingWords} words, at this exact reading level.
+- The setting, examples, people, and central problem must feel different on repeated generations for the same learner.
+- Do not reuse PaperStride's older fallback examples about coaches, vague technology feedback, moon rovers, or a generic research mission unless the learner explicitly asks for that exact topic.
 - Follow this blueprint exactly; it is the curriculum plan for the worksheet:
   - Curriculum path: ${blueprint.curriculumPath}
   - Grade expectations: ${blueprint.gradeExpectations}
@@ -377,7 +450,8 @@ Return JSON exactly:
 async function generateAllSections(
   input: WorksheetInput,
   blueprint: LearningBlueprint,
-  sections: WorksheetSection[]
+  sections: WorksheetSection[],
+  run: WorksheetRun
 ): Promise<Record<string, GeneratedQuestion[]>> {
   const totalQuestions = sections.reduce((sum, s) => sum + s.questionCount, 0);
   const hasMathOrLogic = sections.some((s) => /math|logic|pattern/i.test(s.subject));
@@ -398,7 +472,7 @@ async function generateAllSections(
 
   const content = await ollamaChat({
     model: FAST_MODEL,
-    temperature: hasMathOrLogic ? 0.2 : 0.35,
+    temperature: hasMathOrLogic ? 0.26 : 0.45,
     maxTokens: Math.min(2400, 250 + totalQuestions * 130),
     timeoutMs: LLM_TIMEOUT_MS,
     responseFormat: "json_object",
@@ -413,12 +487,17 @@ async function generateAllSections(
         content: `Learner: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
 ${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold those areas appropriately.` : ""}
 Theme thread: ${blueprint.themeThread ?? input.interests}
+Freshness key: ${run.seed.slice(0, 18)} (do not print it)
+Scenario lens: ${run.scenario}
+Reasoning angle: ${run.angle}
 
 Write questions for EACH section below. Weave the interests into scenarios so they feel
 specific and motivating. Within each section, make the first question accessible and the
 last the most challenging. Prefer multiple choice (3-4 options, exactly one correct answer
 that appears in "choices"); use an empty "choices" array for writing/explanation prompts.
 For numeric questions, double-check the arithmetic so the explanation matches the answer.
+Avoid repeating generic questions from earlier worksheets; vary names, objects, numbers,
+settings, and the kind of evidence being used.
 
 SECTIONS:
 ${sectionSpecs}
@@ -443,7 +522,8 @@ ${shape}
 async function generateSectionQuestions(
   input: WorksheetInput,
   blueprint: LearningBlueprint,
-  section: WorksheetSection
+  section: WorksheetSection,
+  run: WorksheetRun
 ): Promise<GeneratedQuestion[]> {
   const isMath = section.subject === "Math Reasoning" || /math|logic|pattern/i.test(section.subject);
   const content = await ollamaChat({
@@ -470,6 +550,9 @@ Focus: ${section.focus}
 ${section.isWeakArea ? "⚑ This is a WEAK AREA. Start with one confidence-builder question, then build up. Add a scaffolding hint to harder questions." : ""}
 ${section.interestConnection ? `Interest connection: ${section.interestConnection}` : ""}
 Theme thread: ${blueprint.themeThread ?? input.interests}
+Freshness key: ${run.seed.slice(0, 18)} (do not print it)
+Scenario lens: ${run.scenario}
+Reasoning angle: ${run.angle}
 
 Write EXACTLY ${section.questionCount} questions.
 - Q1 should be accessible (confidence-builder). Final Q should be the most challenging.
@@ -477,6 +560,7 @@ Write EXACTLY ${section.questionCount} questions.
 - Prefer multiple choice (3-4 options, exactly one correct answer in "choices").
 - Open response for writing/explanation prompts — use empty "choices" array.
 - Every question needs a correct answer and a short explanation.
+- Vary names, numbers, objects, source details, and settings from previous worksheets.
 - For numeric questions: work the arithmetic carefully and double-check it. The explanation
   must show the steps that arrive at exactly the correctAnswer. Do not state one number in
   the steps and a different number as the answer.
@@ -734,8 +818,8 @@ async function ollamaChat(options: {
 // Keep groqChat as an alias so existing call sites don't need updating yet.
 const groqChat = ollamaChat;
 
-function createFallbackHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
-  return injectNickname(createSampleHtmlWorksheet(input, blueprint), input.childName);
+function createFallbackHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint, run = createWorksheetRun(input)): string {
+  return injectNickname(createSampleHtmlWorksheet(input, blueprint, run), input.childName);
 }
 
 function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlueprint {
@@ -789,8 +873,8 @@ function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlue
 function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
   const early = input.age <= 6;
   const elementary = input.age >= 7 && input.age <= 10;
-  const middle = input.age >= 11 && input.age <= 14;
   const high = isHighSchoolOrAdult(input);
+  const middle = !high && input.age >= 11 && input.age <= 14;
   const theme = input.interests.split(",")[0]?.trim() || "learning";
   const history = isHistoryTheme(theme);
   const sections = defaultSectionPlan(input);
@@ -841,8 +925,9 @@ function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
 // the fallback still covers the right subjects with sensible counts.
 function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
   const early = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
-  const elementary = !early && input.age <= 10;
-  const middle = !early && !elementary && input.age <= 14;
+  const high = isHighSchoolOrAdult(input);
+  const elementary = !early && !high && input.age <= 10;
+  const middle = !early && !elementary && !high && input.age <= 14;
   const theme = input.interests.split(",")[0]?.trim() || "learning";
   const history = isHistoryTheme(theme);
 
@@ -868,6 +953,15 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
         { subject: "Logic and Patterns", questionCount: 1, skills: ["sequence", "reasoning"], focus: "A timeline or evidence-order puzzle." }
       ];
     }
+    if (isBooksTheme(theme)) {
+      return [
+        { subject: "Reading Comprehension", questionCount: 5, skills: ["main idea", "story details", "sequence", "character clues"], focus: "A book-themed passage with evidence questions." },
+        { subject: "Vocabulary in Context", questionCount: 3, skills: ["context clues", "story words", "using words"], focus: "Words readers use to discuss stories." },
+        { subject: "Grammar and Writing", questionCount: 4, skills: ["sentence structure", "punctuation", "clear recommendation"], focus: "Write and revise sentences about books." },
+        { subject: "Math Reasoning", questionCount: 2, skills: ["word problems", "counting groups"], focus: "Bookshelf and reading-time word problems." },
+        { subject: "Logic and Patterns", questionCount: 2, skills: ["sequence", "reasoning"], focus: "Chapter-order and clue puzzles." }
+      ];
+    }
     return [
       // Core
       { subject: "Reading Comprehension", questionCount: 4, skills: ["main idea", "supporting detail", "sequence", "vocabulary in context"], focus: "An original theme passage with evidence questions." },
@@ -889,6 +983,15 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
         { subject: "Grammar and Writing", questionCount: 3, skills: ["revision", "explanation writing", "claim evidence reasoning"], focus: "Revise and explain a historical claim." },
         { subject: "Math Reasoning", questionCount: 3, skills: ["timeline math", "ratios", "quantitative reasoning"], focus: "Use dates and counts to reason about historical change." },
         { subject: "Critical Thinking", questionCount: 1, skills: ["synthesis", "argument"], focus: "Weigh two explanations for an event." }
+      ];
+    }
+    if (isBooksTheme(theme)) {
+      return [
+        { subject: "Reading Comprehension", questionCount: 5, skills: ["main idea", "evidence", "inference", "character motivation"], focus: "A substantial book-themed passage with evidence questions." },
+        { subject: "Vocabulary in Context", questionCount: 3, skills: ["context clues", "literary terms"], focus: "Terms readers use to discuss texts." },
+        { subject: "Grammar and Writing", questionCount: 4, skills: ["revision", "sentence combining", "recommendation writing"], focus: "Revise and explain a book recommendation." },
+        { subject: "Math Reasoning", questionCount: 3, skills: ["multi-step word problems", "ratios", "reading schedules"], focus: "Book-club and reading-log math." },
+        { subject: "Critical Thinking", questionCount: 2, skills: ["claim evidence reasoning", "comparison"], focus: "Compare interpretations and defend a text-based claim." }
       ];
     }
     return [
@@ -913,6 +1016,16 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
       { subject: "Grammar and Writing", questionCount: 3, skills: ["concision", "claim evidence reasoning", "argument"], focus: "Revision and a short historical argument." },
       { subject: "Math Reasoning", questionCount: 2, skills: ["timeline reasoning", "percentages", "quantitative interpretation"], focus: "Use dates and figures to test a historical claim." },
       { subject: "Critical Thinking", questionCount: 2, skills: ["synthesis", "argument"], focus: "Connect evidence, interpretation, and uncertainty." }
+    ];
+  }
+
+  if (isBooksTheme(theme)) {
+    return [
+      { subject: "Reading Comprehension", questionCount: 6, skills: ["central claim", "text evidence", "inference", "tone", "structure", "interpretation"], focus: "An advanced passage about reading, books, and evidence." },
+      { subject: "Vocabulary in Context", questionCount: 4, skills: ["literary vocabulary", "precise meaning"], focus: "Academic reading and literature words in context." },
+      { subject: "Grammar and Writing", questionCount: 4, skills: ["concision", "claim evidence reasoning", "argument"], focus: "Revision and a short book-based argument." },
+      { subject: "Math Reasoning", questionCount: 3, skills: ["percentages", "functions", "reading-log interpretation"], focus: "Quantitative reasoning through book-club and reading-log scenarios." },
+      { subject: "Critical Thinking", questionCount: 3, skills: ["synthesis", "comparison", "argument"], focus: "Compare interpretations and defend a claim with textual evidence." }
     ];
   }
 
@@ -946,8 +1059,9 @@ function canonicalSubject(name: string): string | null {
 
 function questionCountBounds(input: WorksheetInput): { min: number; max: number } {
   const early = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
-  const elementary = !early && input.age <= 10;
-  const middle = !early && !elementary && input.age <= 14;
+  const high = isHighSchoolOrAdult(input);
+  const elementary = !early && !high && input.age <= 10;
+  const middle = !early && !elementary && !high && input.age <= 14;
 
   if (early) return { min: MIN_TOTAL_QUESTIONS, max: 10 };
   if (elementary) return { min: 10, max: 16 };
@@ -1005,6 +1119,8 @@ function normalizeSections(value: unknown, fallback: WorksheetSection[], input: 
 }
 
 function qualityProfileFor(input: WorksheetInput) {
+  const high = isHighSchoolOrAdult(input);
+
   if (input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten") {
     return {
       minHtmlCharacters: 7000,
@@ -1027,25 +1143,8 @@ function qualityProfileFor(input: WorksheetInput) {
     };
   }
 
-  if (input.age <= 14) {
+  if (high) {
     return {
-      minHtmlCharacters: 13000,
-      minStudentWords: 950,
-      minQuestions: 16,
-      minReadingWords: 460,
-      minVocabularyCards: 6,
-      requiredTerms: [
-        "reading comprehension",
-        "vocabulary",
-        "math reasoning",
-        "logic",
-        "answer sheet",
-        "smart test strategies"
-      ]
-    };
-  }
-
-  return {
     minHtmlCharacters: 17000,
     minStudentWords: 1300,
     minQuestions: 18,
@@ -1058,6 +1157,23 @@ function qualityProfileFor(input: WorksheetInput) {
       "evidence",
       "trap answer",
       "math reasoning",
+      "answer sheet",
+      "smart test strategies"
+    ]
+  };
+  }
+
+  return {
+    minHtmlCharacters: 13000,
+    minStudentWords: 950,
+    minQuestions: 16,
+    minReadingWords: 460,
+    minVocabularyCards: 6,
+    requiredTerms: [
+      "reading comprehension",
+      "vocabulary",
+      "math reasoning",
+      "logic",
       "answer sheet",
       "smart test strategies"
     ]
@@ -1088,8 +1204,8 @@ function sleep(milliseconds: number): Promise<void> {
   });
 }
 
-function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
-  return assembleWorksheet(input, blueprint, {});
+function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint, run = createWorksheetRun(input)): string {
+  return assembleWorksheet(input, blueprint, {}, run);
 }
 
 type RenderQuestion = {
@@ -1108,7 +1224,8 @@ type RenderQuestion = {
 function assembleWorksheet(
   input: WorksheetInput,
   blueprint: LearningBlueprint,
-  content: WorksheetContent
+  content: WorksheetContent,
+  run = createWorksheetRun(input)
 ): string {
   const theme = escapeHtml(input.interests.split(",")[0]?.trim() || "learning");
   const allInterests = escapeHtml(input.interests);
@@ -1121,11 +1238,7 @@ function assembleWorksheet(
   const strategyBlock = strategyBlockFor(input, blueprint);
   const passage = content.passageHtml
     ? content.passageHtml
-    : high
-      ? highSchoolFallbackPassage(theme)
-      : middle
-        ? middleSchoolFallbackPassage(theme, allInterests)
-        : elementaryFallbackPassage(theme, allInterests);
+    : fallbackPassageFor(input, theme, allInterests, run);
   const rawTheme = input.interests.split(",")[0]?.trim() || "your topic";
   const history = isHistoryTheme(rawTheme);
   const bankVocab = bankVocabFor(high, middle, rawTheme);
@@ -1226,7 +1339,7 @@ function assembleWorksheet(
     </section>`
     )
     .join("\n");
-  const funZone = funZoneBlock(input, theme);
+  const funZone = funZoneBlock(input, theme, run);
   const answerCards = allQuestions
     .map(
       (q) => `<article class="answer" data-answer="true">
@@ -1388,6 +1501,28 @@ function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][]
       ["evidence", "a clue or fact that helps prove an idea", "The date on the letter is evidence.", "Evidence = proof clue."]
     ];
   }
+  if (isBooksTheme(theme) && high) {
+    return [
+      ["interpretation", "an explanation of what a text means", "Two readers can support different interpretations of the same chapter.", "Interpretation = meaning with evidence."],
+      ["annotation", "a note written beside a text to track thinking", "Her annotation marked the sentence where the narrator changed tone.", "Annotation = margin thinking."],
+      ["theme", "a big idea that runs through a text", "The theme of courage appears in both the novel and the poem.", "Theme = big idea."],
+      ["narrator", "the voice that tells a story", "A narrator may be honest, limited, or biased.", "Narrator = storytelling voice."],
+      ["subtext", "meaning that is suggested but not directly stated", "The subtext of the scene shows that the character is worried.", "Subtext = under-the-surface meaning."],
+      ["claim", "a statement that can be supported with evidence", "A literary claim needs quotations or details from the text.", "Claim = point to prove."],
+      ["synthesis", "combining ideas into a stronger whole", "The essay uses synthesis to connect the novel, the review, and the interview.", "Synthesis = ideas joined together."],
+      ["perspective", "a point of view shaped by experience", "A reader's perspective can affect which character feels most convincing.", "Perspective = viewpoint."]
+    ];
+  }
+  if (isBooksTheme(theme)) {
+    return [
+      ["chapter", "a section of a book", "The next chapter shows where the character travels.", "Chapter = book part."],
+      ["character", "a person or figure in a story", "The main character learns from a mistake.", "Character = story person."],
+      ["setting", "where and when a story happens", "The setting is a quiet library after school.", "Setting = place and time."],
+      ["clue", "a detail that helps solve or understand something", "The cover picture gives a clue about the story.", "Clue = helpful detail."],
+      ["summary", "a short retelling of the main ideas", "A summary tells the important parts without every detail.", "Summary = short version."],
+      ["recommend", "to suggest something because it is a good choice", "The student recommends the book to a friend.", "Recommend = suggest."]
+    ];
+  }
   if (high) {
     return [
       ["nuance", "a small but important difference in meaning", `A strong essay captures the nuance in a debate about ${theme}.`, "Nuance = a subtle shade of meaning."],
@@ -1422,43 +1557,103 @@ function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][]
   ];
 }
 
-function highSchoolFallbackPassage(theme: string): string {
+function fallbackPassageFor(input: WorksheetInput, theme: string, interests: string, run: WorksheetRun): string {
+  const high = isHighSchoolOrAdult(input);
+  const middle = !high && input.age >= 11;
+
+  if (high) return highSchoolFallbackPassage(theme, run);
+  if (middle) return middleSchoolFallbackPassage(theme, interests, run);
+  return elementaryFallbackPassage(theme, interests, run);
+}
+
+function variantFromRun(run: WorksheetRun, salt: string, variants: string[]): string {
+  return pickOne(variants, seededRng(`${run.seed}|${salt}`));
+}
+
+function highSchoolFallbackPassage(theme: string, run: WorksheetRun): string {
   if (isHistoryTheme(theme)) {
-    return `<p><strong>Passage A:</strong> Advanced history work begins with a deceptively simple question: what would count as convincing evidence? A chronicle may name a ruler as the cause of a reform, while tax records, migration tables, and court petitions suggest that pressure had been building for decades. The strongest historical argument does not merely collect impressive details. It explains how each source was produced, whose interests it served, what it leaves out, and how it changes when placed beside other evidence. That process is called corroboration, and it is one reason historical interpretation is more demanding than memorizing dates.</p>
+    return variantFromRun(run, "history-high", [
+      `<p><strong>Passage A:</strong> Advanced history work begins with a deceptively simple question: what would count as convincing evidence? A chronicle may name a ruler as the cause of a reform, while tax records, migration tables, and court petitions suggest that pressure had been building for decades. The strongest historical argument does not merely collect impressive details. It explains how each source was produced, whose interests it served, what it leaves out, and how it changes when placed beside other evidence. That process is called corroboration, and it is one reason historical interpretation is more demanding than memorizing dates.</p>
   <p>Consider a city that expanded its public schools between 1880 and 1910. One interpretation might credit a mayor who promised modern classrooms. A second might emphasize factory owners who wanted literate workers. A third might point to immigrant families who organized petitions after their children were turned away from crowded schools. Each interpretation may contain truth, but none is complete until the historian tests it against the record. Election speeches reveal ambition. Budgets reveal priorities. Attendance ledgers show who was actually served. Petitions preserve voices that official reports sometimes ignore. The historian's task is to decide how these fragments fit together without pretending the evidence is cleaner than it is.</p>
   <p><strong>Passage B:</strong> Chronology also matters. If the petitions appeared before the mayor's speech, they may have shaped the promise instead of merely responding to it. If school spending rose only after a new tax law, fiscal policy becomes part of the explanation. If factories had already begun requiring reading tests for apprentices, economic pressure may have reinforced public demand. Causation in history is rarely a single arrow. It is usually a network of conditions, choices, constraints, and unintended consequences. Strong historians identify the most important causes while admitting what the evidence cannot prove.</p>
   <p>This is why historical thinking remains useful beyond a classroom. It trains a reader to resist simple stories, especially when those stories flatter one group or erase another. It also makes uncertainty productive. An unanswered question is not a failure; it is a research path. A careful scholar can write, "The evidence strongly suggests," "This source complicates," or "This explanation is plausible but incomplete." Those phrases are not weak. They are honest. They show that the writer understands both the power and the limits of the archive.</p>
-  <p>For a learner interested in ${theme}, the goal is not to sound impressive by using difficult words. The goal is to use those words to think more precisely. Historiography asks how explanations change over time. Contextualization asks what else was happening when a source was created. Continuity and change ask what transformed and what endured. When a student connects these habits to a clear claim, the worksheet becomes more than practice. It becomes training in how to build an argument that can stand up to evidence.</p>`;
+  <p>For a learner interested in ${theme}, the goal is not to sound impressive by using difficult words. The goal is to use those words to think more precisely. Historiography asks how explanations change over time. Contextualization asks what else was happening when a source was created. Continuity and change ask what transformed and what endured. When a student connects these habits to a clear claim, the worksheet becomes more than practice. It becomes training in how to build an argument that can stand up to evidence.</p>`,
+      `<p><strong>Passage A:</strong> A museum team preparing an exhibit about ${theme} faces a problem: the most dramatic source is not always the most reliable one. One visitor interview is vivid, an old map is precise, and a damaged ledger contains numbers that do not fit the official story. The team has to decide how to arrange the evidence without making the past look simpler than it was.</p>
+  <p>The strongest exhibit begins by asking what each source can and cannot prove. The interview preserves memory, but memory can compress events. The map shows location, but not motives. The ledger records payments, but not the arguments behind them. When the sources disagree, the disagreement becomes useful. It shows where the real historical question lives.</p>
+  <p><strong>Passage B:</strong> A careful historian would contextualize each source before drawing a conclusion. Who created it? Who was expected to read it? What pressure shaped it? A public speech may hide uncertainty because the speaker wants support. A private letter may reveal doubt, but only from one person's point of view. Corroboration turns scattered details into a stronger argument.</p>
+  <p>This kind of work matters because history is not just a list of events. It is a disciplined argument about change, continuity, causation, and evidence. A learner studying ${theme} practices the same habit needed in advanced reading: slow down, compare sources, name the limits, and make the claim only as strong as the proof allows.</p>`
+    ]);
   }
 
-  return `<p><strong>Passage A:</strong> Coaches, inventors, and historians often disagree about what makes a person improve. One group praises natural talent, another praises technology, and a third points to discipline. The most useful answer is less dramatic: improvement usually comes from feedback that is specific enough to change the next attempt. A basketball player who only hears "shoot better" receives criticism, but not instruction. A player who learns that the elbow is drifting outward, that the release is late, and that fatigue changes foot placement receives information that can be tested. The difference matters because feedback becomes powerful only when it can guide action.</p>
-  <p>Modern technology can make feedback faster. A camera can freeze a shooting motion, a spreadsheet can reveal which practice days were most efficient, and a robot can repeat the same movement without boredom. Yet tools do not replace judgment. A device may show that a student answered vocabulary questions quickly, but it cannot always tell whether the student understood the passage or merely recognized familiar words. A chart can show that accuracy improved from 68 percent to 83 percent, but the learner still has to ask what changed: more time, better notes, easier questions, or a stronger strategy. Data begins the conversation; thinking finishes it.</p>
-  <p>That is why disciplined learners treat mistakes as evidence, not as proof of failure. When they miss a reading question, they do not simply memorize the correct letter. They ask whether the wrong answer was too broad, too extreme, unsupported, or tempting because it repeated a phrase from the passage. When they miss a math question, they ask whether the error came from the setup, the calculation, the units, or the final interpretation. This habit is especially useful on SAT-style tests because many wrong choices are plausible. They are designed to attract students who read quickly but not carefully.</p>
-  <p><strong>Passage B:</strong> History offers a similar lesson. Cities that adopted new tools, from printing presses to transit systems, did not automatically become wiser or more fair. The tools created possibilities, but people still had to decide how to use them. A map can help a city plan safer roads, but a biased map may ignore neighborhoods with less political power. A timeline can show when inventions appeared, but it cannot by itself explain who benefited and who was left out. The strongest thinkers combine curiosity with skepticism. They welcome useful tools, but they also evaluate the assumptions behind the tools.</p>
-  <p>Consider a student comparing two explanations for an event. One explanation may be exciting because it names a single hero, invention, or lucky moment. Another may be less simple because it includes economics, geography, public choices, and unintended consequences. The second explanation is harder to remember, but it may be more accurate. Strong readers learn to prefer the answer that the evidence can actually support. Strong mathematicians do the same thing with numbers: they do not accept a result merely because it feels close. They check whether the units, operations, and assumptions fit the situation.</p>
-  <p>The same approach can guide a student who cares about ${theme}. Interest creates energy, but strategy turns energy into progress. A learner might begin with excitement, then calibrate the challenge: not so easy that practice becomes automatic, not so hard that effort becomes random. The best practice sits in the stretch zone, where a mistake gives information and a correct answer can be explained. In that zone, reading comprehension, mathematical reasoning, and creative problem solving become connected. The student is not just finishing a worksheet; the student is learning how to think under pressure and how to defend a choice with clear evidence.</p>`;
+  if (isBooksTheme(theme)) {
+    return variantFromRun(run, "books-high", [
+      `<p><strong>Passage A:</strong> In ${escapeHtml(run.scenario)}, the hardest question is not which book is "best." The harder question is which kind of reading gives the strongest evidence for an interpretation. A print copy lets one student mark shifts in tone. An audiobook helps another hear irony in the narrator's voice. A graphic adaptation shows setting and gesture instantly, but it may leave out sentences that explain a character's motive. Each format changes what the reader notices.</p>
+  <p>The group studies ${escapeHtml(run.detail)} and compares three responses to the same chapter. One response summarizes the plot accurately but never makes a claim. A second response makes a bold claim but gives no quotation. A third response chooses a short passage, explains the narrator's word choice, and connects it to the theme of loyalty. The third response is strongest because it can be tested against the text.</p>
+  <p><strong>Passage B:</strong> Serious reading is not just finishing pages. It is the habit of slowing down when a detail seems small but important. A repeated image, a sudden silence, or a change in sentence length can signal that the author wants the reader to infer something. This is why annotations matter: they preserve the moment when the reader notices a pattern and turns it into a question.</p>
+  <p>For an older learner interested in ${theme}, books become training for argument. The reader has to make a claim, choose evidence, explain the evidence, and admit when another interpretation is plausible. That work builds the same skills needed in advanced essays and test passages: precision, patience, and the confidence to say, "Here is the line that proves it."</p>`,
+      `<p><strong>Passage A:</strong> A library committee is building a display around ${theme}, but the students disagree about what belongs on the front table. One student wants only popular novels because more classmates will stop and look. Another wants challenging classics because the display should stretch readers. A third argues for a mix: one familiar book, one surprising book, and one book that connects to another subject.</p>
+  <p>The debate changes when the committee studies ${escapeHtml(run.detail)}. Checkout records show popularity, but not depth. Reader reviews show enthusiasm, but some reviews repeat opinions without evidence. Teacher notes explain literary value, but they may overlook what students actually want to read. The committee realizes that a good decision needs more than one kind of source.</p>
+  <p><strong>Passage B:</strong> Books often look personal because each reader brings a private history to the page. Still, a school argument about books cannot rely only on preference. A strong claim names a pattern in the text, quotes or describes evidence, and explains why that evidence matters. "I liked it" may be honest, but "the shifting narrator makes the ending less certain" gives other readers something to test.</p>
+  <p>That is the real value of reading practice. A student who learns to support an interpretation of ${theme} is also learning to reason in public: listen to competing views, weigh evidence, and revise a claim when the proof becomes stronger.</p>`
+    ]);
+  }
+
+  return `<p><strong>Passage A:</strong> In ${escapeHtml(run.scenario)}, students are asked to ${escapeHtml(run.angle)}. The assignment sounds simple until the group realizes that the first explanation is not always the best one. One student notices ${escapeHtml(run.detail)}. Another wants to move quickly and choose the answer that feels obvious. A third asks for proof that can be checked by someone else.</p>
+  <p>The group builds a small evidence board. They separate facts from guesses, label which details came from reading, and mark which numbers came from calculation. This process slows them down at first, but it prevents a common mistake: treating a confident answer as a correct answer. Confidence can help a learner begin; evidence helps the learner know whether the answer deserves to stay.</p>
+  <p><strong>Passage B:</strong> The same habit works across subjects. In reading, a student checks whether a claim is supported by the passage. In math, the student checks whether the units and operations match the situation. In science, the student asks what changed and what stayed the same. In writing, the student revises a sentence until the reason is clear.</p>
+  <p>For a learner interested in ${theme}, the point is not to make every question sound the same. The point is to use the interest as a doorway into stronger thinking. Each new worksheet should feel like a new case: different details, different evidence, and a different reason to slow down before choosing an answer.</p>`;
 }
 
-function middleSchoolFallbackPassage(theme: string, interests: string): string {
+function middleSchoolFallbackPassage(theme: string, interests: string, run: WorksheetRun): string {
   if (isHistoryTheme(theme)) {
-    return `<p>A historian is a detective of the past, but the clues are not always simple. One source might be a letter, another might be a map, and another might be a broken tool found near an old road. Each source can teach something, but each source also has limits. A letter tells one person's perspective. A map may show roads and rivers, but not the people who could not afford to travel. An artifact shows what people made or used, but it may not explain what they believed.</p>
+    return variantFromRun(run, "history-middle", [
+      `<p>A historian is a detective of the past, but the clues are not always simple. One source might be a letter, another might be a map, and another might be a broken tool found near an old road. Each source can teach something, but each source also has limits. A letter tells one person's perspective. A map may show roads and rivers, but not the people who could not afford to travel. An artifact shows what people made or used, but it may not explain what they believed.</p>
   <p>Imagine a class studying why a town grew quickly after a railroad arrived. The easiest answer is, "The railroad caused the growth." A stronger answer looks for evidence. Did stores open before or after the railroad station? Did more families move into town? Did farmers ship crops farther away? Did some people lose land when the tracks were built? A timeline helps the class put events in order, but the students still need to explain cause and effect.</p>
   <p>The class also compares perspectives. A shop owner might remember the railroad as a success because more customers arrived. A farmer might remember it as expensive because land prices changed. A worker might remember dangerous jobs building the tracks. These memories do not all cancel each other out. Together, they help students see that history is bigger than one person's story.</p>
-  <p>Because the learner also mentioned ${interests}, the worksheet connects history to real interests and real choices. Good historical thinking asks students to read carefully, use dates accurately, notice bias, and explain claims in their own words. The goal is not to memorize every detail. The goal is to use evidence to make a fair explanation of what changed, what stayed the same, and why it mattered.</p>`;
+  <p>Because the learner also mentioned ${interests}, the worksheet connects history to real interests and real choices. Good historical thinking asks students to read carefully, use dates accurately, notice bias, and explain claims in their own words. The goal is not to memorize every detail. The goal is to use evidence to make a fair explanation of what changed, what stayed the same, and why it mattered.</p>`,
+      `<p>A class history team opens a box labeled ${escapeHtml(run.detail)}. Inside are clues from different years, but the clues do not explain themselves. One student wants to put the objects in time order. Another wants to know who made them. A third asks which clue is most trustworthy.</p>
+  <p>The team builds a timeline, then notices that time order is only the beginning. If a newspaper article praises a new rule, it may show what leaders wanted people to believe. If a family letter complains about the same rule, it may show how ordinary people experienced it. Both sources matter, but neither source tells the whole story alone.</p>
+  <p>Good historians compare sources the way careful readers compare details in a passage. They ask what changed, what stayed the same, and which cause seems strongest. When two sources disagree, the disagreement becomes a question to investigate rather than a problem to ignore.</p>
+  <p>That is why ${theme} can train strong thinking. The learner practices reading closely, weighing evidence, and explaining why one claim is stronger than another.</p>`
+    ]);
   }
 
-  return `<p>Few subjects reward curiosity like ${theme}. What looks simple from a distance usually turns out to be full of moving parts, careful choices, and surprising connections. People who study ${theme} closely notice details that a casual observer walks right past: a small change in conditions, a pattern that repeats, or a number that does not quite fit. Those details are where the real questions begin, and where ${theme} stops being just a hobby and starts becoming an investigation.</p>
-  <p>Consider how someone exploring ${theme} actually works. They begin by observing carefully and writing down what they see, separating what is certain from what is only a guess. Then they look for relationships: when one thing increases, does another rise or fall? Does a result repeat, or was it luck? Because this learner is also interested in ${interests}, they start to notice that ideas from one field can explain another — how forces move objects, how stories shape memory, and how numbers reveal what the eye alone would miss. Connections like these make ${theme} far richer than any single fact about it.</p>
+  if (isBooksTheme(theme)) {
+    return variantFromRun(run, "books-middle", [
+      `<p>A book club is preparing a recommendation shelf, but the group cannot agree on what makes a book worth sharing. One student chooses exciting plots. Another chooses characters who change. A third chooses books with sentences that make readers stop and think. The teacher asks them to support each choice with evidence from the text.</p>
+  <p>The group studies ${escapeHtml(run.detail)} and starts to notice patterns. A cover can attract attention, but it does not prove the story is strong. A chapter title can give a clue, but the chapter itself has to support the prediction. A reader review can be useful, but only if it explains why the book works.</p>
+  <p>By the end of the discussion, the students understand that reading is more than finishing pages. A strong reader asks questions, notices details, and explains ideas clearly. When two readers disagree, they go back to the text and ask, "Which detail proves it?"</p>
+  <p>For someone interested in ${theme}, this kind of book talk builds reading comprehension, vocabulary, and writing. It also makes the next book feel like a new mystery with clues waiting inside.</p>`
+    ]);
+  }
+
+  return `<p>Few subjects reward curiosity like ${theme}. In ${escapeHtml(run.scenario)}, what looks simple from a distance turns out to be full of moving parts, careful choices, and surprising connections. A student notices ${escapeHtml(run.detail)} and asks whether it is a fact, a clue, or only a guess. That question is where ${theme} stops being just a hobby and starts becoming an investigation.</p>
+  <p>Consider how someone exploring ${theme} actually works. They begin by observing carefully and writing down what they see, separating what is certain from what is only a guess. Then they look for relationships: when one thing increases, does another rise or fall? Does a result repeat, or was it luck? Because this learner is also interested in ${interests}, they start to notice that ideas from one field can explain another: how forces move objects, how stories shape memory, and how numbers reveal what the eye alone would miss. Connections like these make ${theme} far richer than any single fact about it.</p>
   <p>Progress in ${theme} rarely comes from getting everything right the first time. It comes from testing an idea, watching it fall short in some small way, and asking exactly what went wrong. A measurement might be off, a step might be skipped, or a hidden assumption might be wrong. Each correction is a clue, and clues add up. Over weeks and months, a beginner who keeps asking precise questions can come to understand ${theme} more deeply than someone who only memorized facts about it.</p>
   <p>That is why ${theme} is such good training for the mind. To explain a result, a person has to read carefully, reason with numbers, and put their thinking into clear words. To defend a conclusion, they have to point to real evidence instead of a feeling. The very habits that make someone good at ${theme} — patience, attention, and honesty about mistakes — are the same habits that make someone a strong reader, a careful thinker, and a confident problem solver in every subject they meet.</p>`;
 }
 
-function elementaryFallbackPassage(theme: string, interests: string): string {
+function elementaryFallbackPassage(theme: string, interests: string, run: WorksheetRun): string {
   if (isHistoryTheme(theme)) {
-    return `<p>Maya's class visits a small history room at the library. On the first table, the students see an old photograph, a train ticket, and a handwritten letter. Their teacher says, "These are sources. A source gives us information about the past." Maya looks closely at the photo. It shows a street with horses, a tiny grocery store, and children standing near a wooden schoolhouse.</p>
+    return variantFromRun(run, "history-elementary", [
+      `<p>Maya's class visits a small history room at the library. On the first table, the students see an old photograph, a train ticket, and a handwritten letter. Their teacher says, "These are sources. A source gives us information about the past." Maya looks closely at the photo. It shows a street with horses, a tiny grocery store, and children standing near a wooden schoolhouse.</p>
   <p>The class makes a timeline. First, the schoolhouse opened in 1908. Next, the train station opened in 1912. Then a new bridge opened in 1916. Maya notices that each event helped the community in a different way. The school helped children learn. The train helped people and goods move. The bridge helped neighbors visit each other more safely.</p>
   <p>Maya also learns that one source does not tell the whole story. The photograph shows the schoolhouse, but it does not say how the children felt. The letter says one family was excited about the train, but another family may have felt worried about changes in the town. Good historians ask questions, compare sources, and use evidence before they decide what happened.</p>
-  <p>At the end of the visit, Maya writes one clear sentence: "Our community changed when schools, trains, and bridges helped people connect." She underlines the word evidence because every good history answer needs proof. Then she adds one question she still has: "Who built the bridge, and what tools did they use?" A new question means the learning can keep going.</p>`;
+  <p>At the end of the visit, Maya writes one clear sentence: "Our community changed when schools, trains, and bridges helped people connect." She underlines the word evidence because every good history answer needs proof. Then she adds one question she still has: "Who built the bridge, and what tools did they use?" A new question means the learning can keep going.</p>`,
+      `<p>A class opens a history box with ${escapeHtml(run.detail)} inside. The teacher says, "A source is something that gives us information." The students look closely before they guess. One source has a date. One source has a picture. One source has a name written in careful letters.</p>
+  <p>The students put three cards on a timeline. First, a small park opened. Next, a school garden was planted. Last, families held a picnic to celebrate. The order helps the students see how one event can lead to another.</p>
+  <p>One student says the park was important because it gave neighbors a place to meet. Another student says the garden mattered because children learned to grow food. Both ideas can be fair if the students use evidence from the sources.</p>
+  <p>At the end, each learner writes one sentence about what changed in the community and one question they still have. In history, a new question is a good thing because it helps the learning continue.</p>`
+    ]);
+  }
+
+  if (isBooksTheme(theme)) {
+    return variantFromRun(run, "books-elementary", [
+      `<p>A class visits the library to build a recommendation shelf. Each student chooses one book and gives a reason. One student picks a funny story because the character makes a brave choice. Another picks an animal book because the pictures give helpful clues. A third student picks a mystery because each chapter adds a new clue.</p>
+  <p>The librarian shows the class how to look at ${escapeHtml(run.detail)}. A title can give a hint. A cover can make a prediction. A chapter ending can make the reader ask, "What will happen next?" Good readers use these clues, but they also go back to the words on the page.</p>
+  <p>Then the class writes short book cards. Each card names the book, tells the main idea, and gives one detail from the story. The detail is important because it proves the recommendation.</p>
+  <p>For a learner who likes ${theme}, every book can become a small mission: notice clues, learn new words, explain the reason, and share the story with someone else.</p>`
+    ]);
   }
 
   if (theme.toLowerCase().includes("space")) {
@@ -1473,7 +1668,7 @@ function elementaryFallbackPassage(theme: string, interests: string): string {
     <p>At the end of the mission, the learner writes a short conclusion: reading gave the team facts, ${conclusionDetail} gave the team design ideas, and math helped the team compare results. The rover did not work perfectly, but each test taught the team what to try next. That is why a mistake can be useful. It points the learner toward the next smart step.</p>`;
   }
 
-  return `<p>A learner who enjoys ${theme} can turn that interest into a research mission. The first job is to read carefully. The learner looks for facts, marks important words, and writes down evidence instead of guessing. Because the learner also mentioned ${interests}, the mission can connect several subjects at once: reading, science, math, art, movement, and real-world problem solving.</p>
+  return `<p>A learner who enjoys ${theme} starts ${escapeHtml(run.scenario)}. The first job is to read carefully. The learner looks for facts, marks important words, and writes down evidence instead of guessing. Because the learner also mentioned ${interests}, the mission can connect several subjects at once: reading, science, math, art, movement, and real-world problem solving.</p>
   <p>The team builds a small prototype, which means an early model used to test an idea. The first design does not work perfectly. That is useful information. The learner asks what changed, what stayed the same, and which detail from the notes explains the result. Then the learner improves the design and tests again. This is how readers, scientists, and inventors grow stronger.</p>
   <p>Math helps the team compare results. If one test lasts 12 minutes and the next lasts 18 minutes, the learner can measure the difference. If a pattern changes by the same amount each time, the learner can predict what may come next. The final conclusion should use evidence from the passage, numbers from the test, and one clear explanation. The goal is not to be perfect right away. The goal is to notice clues, explain thinking, and choose the next smart step.</p>`;
 }
@@ -1554,6 +1749,30 @@ function fallbackExplanationFor(question: FallbackQuestion, theme: string, ctx: 
 }
 
 function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): string {
+  if (isBooksTheme(theme) && ctx.high) {
+    const answers = [
+      "The central claim is that strong reading is evidence-based: a reader should make an interpretation, support it with text details, and explain why the details matter.",
+      "A strong detail is that print, audio, graphic, review, or display evidence can each change what a reader notices, but none replaces textual proof.",
+      "The response with a quotation or specific detail is stronger because another reader can check it against the text; a summary alone retells but does not prove a claim.",
+      "Annotation is presented as a way to preserve thinking, mark patterns, and turn noticed details into questions or claims.",
+      "A weak literary claim would say only that the reader liked the book or thought it was exciting without evidence from the text.",
+      "The final paragraph connects books to argument by showing that readers practice claims, evidence, interpretation, and revision."
+    ];
+    return answers[index] || "Use a detail from the book passage and explain how it proves the claim.";
+  }
+
+  if (isBooksTheme(theme)) {
+    const answers = [
+      "The main idea is that readers use clues and story details to understand and recommend books.",
+      "A reader can use a title, cover, chapter ending, character action, or detail from the page as a clue.",
+      "A recommendation needs a story detail because the detail proves the reason instead of just giving an opinion.",
+      "Good readers go back to the text and find the detail that supports each idea.",
+      "Open response. A strong sentence names a book or kind of book and gives a clear reason.",
+      "Open response. A good question asks about the topic, character, setting, or what kind of book the reader wants next."
+    ];
+    return answers[index] || "Use evidence from the book passage and explain your thinking.";
+  }
+
   if (ctx.high) {
     const answers = [
       "The central claim is that improvement comes from feedback specific enough to change the next attempt; tools can speed feedback but cannot replace human judgment.",
@@ -1590,9 +1809,11 @@ function mathAnswerFor(text: string): string | null {
   if (/120 letters.*35 percent/i.test(text)) return "42 letters.";
   if (/petitions in 1888/i.test(text)) return "The petitions came first; that timing could mean public demand shaped later speeches and budgets.";
   if (/4 shelves with 6 artifacts/i.test(text)) return "24 artifacts.";
+  if (/4 rows with 6 books/i.test(text)) return "24 books.";
   if (/1908 and .*1912/i.test(text)) return "4 years later.";
   if (/1908, 1912, 1916/i.test(text)) return "1920. The pattern adds 4 years.";
   if (/12 source cards/i.test(text)) return "27 source cards.";
+  if (/bookmark costs \$8/i.test(text)) return "$56, with $4 change from $60.";
   if (/Mission Data table/i.test(text)) return "Full strategy had the best accuracy at 83 percent.";
   if (/4 sets of 6/i.test(text)) return "24 cards.";
   if (/3, 6, 12, 24/i.test(text)) return "48 and 96.";
@@ -1611,9 +1832,11 @@ function mathExplanationFor(text: string): string | null {
   if (/120 letters.*35 percent/i.test(text)) return "35 percent of 120 is 0.35 x 120 = 42.";
   if (/petitions in 1888/i.test(text)) return "Chronology matters because an earlier petition could have influenced a later speech or budget decision.";
   if (/4 shelves with 6 artifacts/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
+  if (/4 rows with 6 books/i.test(text)) return "There are 4 equal rows with 6 books in each row, so 4 x 6 = 24.";
   if (/1908 and .*1912/i.test(text)) return "Subtract 1908 from 1912 to find 4 years.";
   if (/1908, 1912, 1916/i.test(text)) return "Each date is 4 years later, so 1916 + 4 = 1920.";
   if (/12 source cards/i.test(text)) return "Add the two days: 12 + 15 = 27.";
+  if (/bookmark costs \$8/i.test(text)) return "Seven bookmarks cost 7 x 8 = 56 dollars, and 60 - 56 = 4 dollars left.";
   if (/Mission Data table/i.test(text)) return "Compare the Accuracy column: 68 percent, 77 percent, and 83 percent. The largest number is 83 percent.";
   if (/4 sets of 6/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
   if (/3, 6, 12, 24/i.test(text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
@@ -1654,9 +1877,11 @@ function mathChoicesFor(question: { section: string; text: string }): string[] |
   if (/120 letters.*35 percent/i.test(text)) return ["24", "35", "42", "85"];
   if (/petitions in 1888/i.test(text)) return ["The petition", "The speech", "The budget growth", "They happened together"];
   if (/4 shelves with 6 artifacts/i.test(text)) return ["10", "20", "24", "30"];
+  if (/4 rows with 6 books/i.test(text)) return ["10", "20", "24", "30"];
   if (/1908 and .*1912/i.test(text)) return ["2", "4", "8", "12"];
   if (/1908, 1912, 1916/i.test(text)) return ["1918", "1920", "1922", "1924"];
   if (/12 source cards/i.test(text)) return ["17", "25", "27", "30"];
+  if (/bookmark costs \$8/i.test(text)) return ["$48, $12 change", "$56, $4 change", "$60, $0 change", "$64, $4 change"];
   if (/Mission Data table/i.test(text)) return ["Quick review", "Evidence notes", "Full strategy", "They were all the same"];
   if (/4 sets of 6/i.test(text)) return ["18", "24", "10", "36"];
   if (/3, 6, 12, 24/i.test(text)) return ["36 and 48", "48 and 96", "30 and 36", "48 and 72"];
@@ -1717,6 +1942,7 @@ function fallbackQuestionBanks(args: {
   vocabWords: string[][];
 }): Record<string, string[]> {
   const { high, middle, history, theme, vocabWords } = args;
+  const books = isBooksTheme(theme);
 
   const reading = history && high
     ? [
@@ -1745,7 +1971,25 @@ function fallbackQuestionBanks(args: {
             "What question does Maya still have at the end of the passage?",
             "Write one sentence explaining how the community changed."
           ]
-        : high
+        : books && high
+          ? [
+              "Which statement best captures the central claim of the passage about reading and evidence?",
+              "Which detail from the passage best shows that format can change what a reader notices?",
+              "Why is the response with a quotation or specific text detail stronger than a plot summary alone?",
+              "In the passage, annotation is presented mainly as a way to do what?",
+              "Which answer would be a weak literary claim because it relies mostly on personal preference?",
+              "How does the final paragraph connect books to advanced argument skills?"
+            ]
+          : books
+            ? [
+                "What is the main idea of the passage about books? Point to one detail that proves it.",
+                "Name one clue a reader can use before or during reading.",
+                "Why does a book recommendation need a detail from the story?",
+                "What does a good reader do when two people disagree about a book?",
+                "Write one sentence recommending a book and include one reason.",
+                "What question would you ask before choosing your next book?"
+              ]
+            : high
     ? [
         "Which statement best captures the central claim of the passage?",
         "Which sentence from the passage gives the strongest evidence that technology can support judgment without replacing it?",
@@ -1783,6 +2027,21 @@ function fallbackQuestionBanks(args: {
         "A source collection has 120 letters. If 35 percent mention crowded classrooms, how many letters mention that problem?",
         "A timeline shows petitions in 1888, a mayor's speech in 1890, and budget growth in 1892. Which event came first, and how could that affect causation?"
       ]
+    : books && high
+      ? [
+          "A reading group annotates 42 of 60 pages in week one and improves the annotation rate by 15 percentage points in week two. What is the week two annotation rate?",
+          "A library display has a budget of $360. Book stands cost $18 each and poster panels cost $24 each. If the group buys 8 stands, how many poster panels can it buy with the remaining budget?",
+          "The function f(x) = 3x + 7 models discussion points earned after x completed chapters. If f(x) = 52, what is x?",
+          "A reading log shows study time rising from 20 to 50 minutes while quiz accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?"
+        ]
+      : books
+        ? [
+            "A shelf has 4 rows with 6 books on each row. How many books are there in all?",
+            "A reader finishes 12 pages on Monday and 15 pages on Tuesday. How many pages did the reader finish in all?",
+            "A chapter pattern goes 3, 6, 12, 24, ___, ___. What are the next two numbers, and what is the rule?",
+            "A bookmark costs $8. How much do 7 bookmarks cost? Then find the change from $60.",
+            "There are 30 minutes for 5 reading stations. How many minutes can each station take?"
+          ]
     : history
       ? [
           "A museum has 4 shelves with 6 artifacts on each shelf. How many artifacts are there in all?",
@@ -1958,8 +2217,9 @@ function themeTitle(theme: string): string {
 
 function learnerFriendlyMissionCopy(input: WorksheetInput, blueprint: LearningBlueprint): string {
   const interests = cleanText(input.interests, 120);
-  const elementary = input.age <= 10;
-  const middle = input.age > 10 && input.age <= 14;
+  const high = isHighSchoolOrAdult(input);
+  const elementary = !high && input.age <= 10;
+  const middle = !high && input.age > 10 && input.age <= 14;
 
   if (elementary) {
     return `This mission uses ${interests} to practice reading clues, solving step by step, and feeling proud of careful thinking. Try your best, show your work, and enjoy the challenge.`;
@@ -2250,9 +2510,8 @@ function logicDeduction(theme: string, rng: () => number): FunActivity {
   };
 }
 
-function funZoneBlock(input: WorksheetInput, theme: string): { html: string; answersHtml: string } {
-  const generationSeed = `${Date.now()}|${Math.random().toString(36).slice(2)}`;
-  const rng = seededRng(`${input.childName}|${input.interests}|${input.grade}|${generationSeed}`);
+function funZoneBlock(input: WorksheetInput, theme: string, run: WorksheetRun): { html: string; answersHtml: string } {
+  const rng = seededRng(`${run.seed}|activity`);
   const young = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
   const elementary = !young && input.age <= 10;
   const high = isHighSchoolOrAdult(input);
