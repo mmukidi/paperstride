@@ -198,16 +198,6 @@ type GeneratedQuestion = {
   explanation: string;
 };
 
-// A real, topic-specific data table the learner interprets (replaces the old hardcoded
-// "study plan" table). AI-authored and tied to the passage topic; omitted if not produced.
-type TopicDataTable = {
-  title: string;
-  intro: string;
-  columns: string[];
-  rows: string[][];
-  question: string;
-};
-
 // Optional AI-authored pieces injected into the deterministic assembler. Anything
 // absent is filled from the deterministic banks, so the worksheet is always complete.
 type WorksheetContent = {
@@ -215,7 +205,6 @@ type WorksheetContent = {
   vocab?: string[][];
   readingQuestions?: GeneratedQuestion[];
   sectionQuestions?: Record<string, GeneratedQuestion[]>;
-  dataTable?: TopicDataTable;
 };
 
 const PASSAGE_BUNDLE_SUBJECTS = new Set(["Reading Comprehension", "Vocabulary in Context"]);
@@ -256,7 +245,6 @@ async function createStagedWorksheetHtml(
       content.passageHtml = bundle.passageHtml;
       content.vocab = bundle.vocab.length ? bundle.vocab : undefined;
       content.readingQuestions = bundle.readingQuestions.length ? bundle.readingQuestions : undefined;
-      content.dataTable = bundle.dataTable;
     } catch (error) {
       console.warn("Passage bundle failed; using bank passage and vocabulary", error);
     }
@@ -305,16 +293,13 @@ async function createStagedWorksheetHtml(
 async function generatePassageBundle(
   input: WorksheetInput,
   blueprint: LearningBlueprint
-): Promise<{ passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[]; dataTable?: TopicDataTable }> {
+): Promise<{ passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[] }> {
   const profile = qualityProfileFor(input);
   const readingCount = blueprint.sections.find((s) => s.subject === "Reading Comprehension")?.questionCount ?? 4;
   const vocabCount = Math.max(
     profile.minVocabularyCards,
     blueprint.sections.find((s) => s.subject === "Vocabulary in Context")?.questionCount ?? profile.minVocabularyCards
   );
-  // Only ask for a data table when the plan calls for data/chart practice, so we don't
-  // spend tokens on it for early learners or reading-only plans.
-  const wantsData = blueprintWantsData(blueprint, blueprint.sections) && input.age >= 9;
 
   const content = await groqChat({
     model: PASSAGE_MODEL,                 // 7B by default for prose quality
@@ -350,23 +335,13 @@ Requirements:
 - Keep tone age-appropriate: playful and concrete for elementary learners, more strategic for older learners.
 - Write ${readingCount} comprehension questions about the passage (main idea, evidence, vocabulary in context, inference as age allows). Where a multiple-choice question fits, give 3-4 options with exactly one correct option that appears in "choices"; otherwise use an empty "choices" array for a written response.
 - Pull ${vocabCount} useful words FROM the passage with a simple definition, an example sentence, and a memory hint.
-- Do not label the passage "Original passage:".${
-          wantsData
-            ? `
-- Also include a small, REAL data table about the passage topic (for example planet facts, rocket speeds, animal sizes, match or team statistics, historical dates) with 3-4 rows and 3 columns. Use realistic numbers a curious learner could look up. Add one interpretation question that requires comparing rows. Do NOT make a table about studying, practice plans, or worksheet habits.`
-            : ""
-        }
+- Do not label the passage "Original passage:".
 
 Return JSON exactly:
 {
   "passageParagraphs": ["paragraph 1", "paragraph 2"],
   "vocab": [ { "word": "", "definition": "", "example": "", "hint": "" } ],
-  "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]${
-    wantsData
-      ? `,
-  "dataTable": { "title": "", "intro": "one sentence on what to notice", "columns": ["", "", ""], "rows": [["", "", ""]], "question": "one comparison question about the table" }`
-      : ""
-  }
+  "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]
 }`
       }
     ]
@@ -384,41 +359,8 @@ Return JSON exactly:
   const passageHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("\n    ");
   const vocab = normalizeGeneratedVocab(parsed.vocab);
   const readingQuestions = normalizeGeneratedQuestions(parsed.questions, readingCount);
-  const dataTable = wantsData ? normalizeDataTable(parsed.dataTable) : undefined;
 
-  return { passageHtml, vocab, readingQuestions, dataTable };
-}
-
-// Validate the AI data table. Returns undefined if it is missing, malformed, or looks
-// like the old "study plan / practice habits" content, so we omit rather than show junk.
-function normalizeDataTable(value: unknown): TopicDataTable | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const v = value as Record<string, unknown>;
-  const title = safeString(v.title);
-  const intro = safeString(v.intro);
-  const question = safeString(v.question);
-  const columns = Array.isArray(v.columns) ? v.columns.map(safeString).filter(Boolean) : [];
-  const rows = Array.isArray(v.rows)
-    ? v.rows
-        .filter((r): r is unknown[] => Array.isArray(r))
-        .map((r) => r.map(safeString))
-        .filter((r) => r.some(Boolean))
-    : [];
-
-  if (!title || columns.length < 2 || rows.length < 2) return undefined;
-  // Reject the off-vision "study habits" style table entirely.
-  if (/practice plan|study plan|worksheet|accuracy|minutes studied/i.test(`${title} ${intro} ${columns.join(" ")}`)) {
-    return undefined;
-  }
-  // Pad/trim each row to the column count so the table always renders cleanly.
-  const width = columns.length;
-  const fixedRows = rows.map((r) => {
-    const row = r.slice(0, width);
-    while (row.length < width) row.push("");
-    return row;
-  });
-
-  return { title, intro, columns, rows: fixedRows, question };
+  return { passageHtml, vocab, readingQuestions };
 }
 
 // Generate questions for ALL non-reading sections in a single call. Returns a map of
@@ -548,15 +490,15 @@ function normalizeGeneratedQuestions(value: unknown, limit: number): GeneratedQu
   for (const raw of value) {
     if (!raw || typeof raw !== "object") continue;
     const candidate = raw as Record<string, unknown>;
-    const prompt = cleanProse(String(candidate.prompt ?? ""));
-    const correctAnswer = cleanProse(String(candidate.correctAnswer ?? ""));
-    const explanation = cleanProse(String(candidate.explanation ?? ""));
+    const prompt = cleanProse(safeString(candidate.prompt));
+    const correctAnswer = cleanProse(safeString(candidate.correctAnswer));
+    const explanation = cleanProse(safeString(candidate.explanation));
     if (!prompt || !correctAnswer) continue;
 
     // Clean the choices: drop empty/junk (e.g. "[]", "N/A") and de-duplicate.
     const seen = new Set<string>();
     let choices = (Array.isArray(candidate.choices) ? candidate.choices : [])
-      .map((c) => cleanProse(String(c)))
+      .map((c) => cleanProse(safeString(c)))
       .filter((c) => c && !/^(\[\s*\]|n\/?a|none|tbd|\.+)$/i.test(c))
       .filter((c) => {
         const key = c.toLowerCase();
@@ -1126,7 +1068,6 @@ function assembleWorksheet(
   const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
   const answerContext = { high, isSpace: isSpaceTheme };
   const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
-  const dataSnapshot = renderTopicDataTable(content.dataTable);
   const strategyBlock = strategyBlockFor(input, blueprint);
   const passage = content.passageHtml
     ? content.passageHtml
@@ -1281,8 +1222,6 @@ function assembleWorksheet(
   .vocab-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:8px; }
   .vocab-card { background:#fbfdfb; }
   .passage { columns: 2 260px; column-gap: 18px; border:1px solid var(--line); padding:12px; background:#fff; }
-  .mini-table { width:100%; border-collapse: collapse; margin:8px 0; }
-  .mini-table th, .mini-table td { border:1px solid var(--line); padding:6px; text-align:left; }
   .label { color:var(--accent); font-size:12px; font-weight:700; text-transform:uppercase; }
   .section-head { margin:14px 0 6px; padding:4px 8px; background:var(--soft); border-left:3px solid var(--accent); font-size:15px; }
   .write { min-height:44px; border-bottom:1px solid var(--ink); margin-top:8px; }
@@ -1340,9 +1279,6 @@ function assembleWorksheet(
   <section class="vocab-grid">
     ${vocabCards}
   </section>
-
-  ${dataSnapshot}
-
   <h2>Question Missions</h2>
   ${questionSectionsHtml}
 
@@ -1829,48 +1765,6 @@ function learnerFriendlyMissionCopy(input: WorksheetInput, blueprint: LearningBl
   }
 
   return `This mission uses ${interests} as context for rigorous practice: evidence-based reading, precise vocabulary, quantitative reasoning, and clear explanations under test-like pressure. ${blueprint.motivationStrategy}`;
-}
-
-function blueprintWantsData(blueprint: LearningBlueprint, sections: WorksheetSection[]): boolean {
-  const planText = [
-    blueprint.curriculumPath,
-    blueprint.gradeExpectations,
-    blueprint.testReadinessPlan,
-    blueprint.visualPlan.join(" "),
-    blueprint.questionFormats.join(" "),
-    ...sections.flatMap((section) => [section.subject, section.focus, section.skills.join(" ")])
-  ].join(" ").toLowerCase();
-
-  return /\b(data|chart|graph|table|percent|statistics|trend|interpret)\b/.test(planText);
-}
-
-// Render a REAL, topic-specific data table the learner interprets. Returns "" when no
-// valid AI table was produced, so we omit the section rather than show filler.
-function renderTopicDataTable(dataTable?: TopicDataTable): string {
-  if (!dataTable) return "";
-
-  const head = dataTable.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
-  const body = dataTable.rows
-    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
-    .join("\n        ");
-  const intro = dataTable.intro ? `<p>${escapeHtml(dataTable.intro)}</p>` : "";
-  const question = dataTable.question
-    ? `<p><strong>Interpret it:</strong> ${escapeHtml(dataTable.question)}</p>
-    <div class="write"></div>`
-    : "";
-
-  return `<h2>${escapeHtml(dataTable.title)}</h2>
-  <article class="card">
-    <p class="label">Read the data</p>
-    ${intro}
-    <table class="mini-table">
-      <thead><tr>${head}</tr></thead>
-      <tbody>
-        ${body}
-      </tbody>
-    </table>
-    ${question}
-  </article>`;
 }
 
 function strategyBlockFor(input: WorksheetInput, blueprint: LearningBlueprint): { title: string; html: string } {

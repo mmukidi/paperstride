@@ -52,8 +52,7 @@ No worksheet data ever leaves the server.
 - Math Reasoning, Grammar & Writing, Science Investigation, Logic & Patterns,
   Social Studies, Critical Thinking (all from static banks currently)
 - Fun Zone: pattern puzzles, word search, spot the difference, crack the code
-- Answer sheet with explanations and strategy tips
-- How-to-use cards and smart test strategy block
+- Answer sheet with explanations, watch-outs, and next-time tips
 - Print / Download / Open buttons
 
 ### Infrastructure
@@ -108,7 +107,7 @@ the fast model:
 
 ```
 Step 1 (preview)   Blueprint        →  llama3.2:3b   (internal plan, cached per input)
-Step 2 (generate)  Passage bundle   →  qwen2.5:7b    (passage + vocab + data table)
+Step 2 (generate)  Passage bundle   →  qwen2.5:7b    (passage + vocab)
 Step 2 (generate)  All sections     →  llama3.2:3b   (ONE batched call, all subjects)
 ```
 
@@ -159,7 +158,6 @@ Live progress steps shown during generation so the ~50s wait feels active:
 | PDF export | Headless browser (Puppeteer) so download is a real PDF |
 | Worksheet summary header | "16 questions · Math + Reading focus · ~38 min" shown at top of worksheet |
 | Difficulty stars per question | ⭐ easy / ⭐⭐ medium / ⭐⭐⭐ stretch on every question card |
-| Data table themed to passage | Table content matches the reading topic, not a hardcoded "practice plans" table |
 | Cross-section coherence | Math/science problems reference the reading passage scenario |
 | OLLAMA_NUM_PARALLEL=2 | Allows two worksheets to generate simultaneously |
 | Queue position feedback | "2 worksheets ahead — ~90 seconds" shown to waiting users |

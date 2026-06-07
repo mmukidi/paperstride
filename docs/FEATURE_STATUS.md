@@ -26,6 +26,7 @@ accounts or sending learner data to a paid external API.
 - Printable HTML workbook generation
 - Deterministic worksheet fallback when AI generation fails
 - Reading passage, vocabulary, question sections, fun zone, and answer key
+- AI question validation that drops incomplete model output before rendering
 - Open, print, and download HTML actions for generated worksheets
 - Docker Compose deployment with Caddy HTTPS reverse proxy
 - Oracle Cloud deployment guide
@@ -48,6 +49,8 @@ accounts or sending learner data to a paid external API.
   mode without alarming ordinary users.
 - Add PDF export for a true one-click printable file.
 - Add print modes for worksheet-only and answer-key-only output.
+- Improve answer-key quality with clearer sample answers for open-response
+  science, writing, and critical-thinking questions.
 - Add a small queue or generation lock before opening to multiple users.
 - Add subject focus controls to the frontend if backend subject focus variants
   are kept.
