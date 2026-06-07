@@ -7,6 +7,14 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+echo "Before deploying, confirm docs/FEATURE_STATUS.md reflects this release."
+if command -v npm >/dev/null 2>&1 && [ -d node_modules ]; then
+  npm run predeploy
+else
+  echo "Skipping npm predeploy check because npm or node_modules is unavailable on this host."
+  echo "Run 'npm run predeploy' before pushing from a development machine."
+fi
+
 compose() {
   if docker compose version >/dev/null 2>&1; then
     docker compose "$@"

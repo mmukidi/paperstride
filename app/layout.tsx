@@ -20,9 +20,9 @@ export const metadata: Metadata = {
     siteName: "PaperStride",
     images: [
       {
-        url: "/paperstride-hero.png",
-        width: 1792,
-        height: 1024,
+        url: "/paperstride-hero.webp",
+        width: 1400,
+        height: 748,
         alt: "Printed worksheets, pencils, and a notebook on a bright study desk"
       }
     ],
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
     title: "PaperStride",
     description:
       "Printable practice that helps students learn away from screens.",
-    images: ["/paperstride-hero.png"]
+    images: ["/paperstride-hero.webp"]
   }
 };
 

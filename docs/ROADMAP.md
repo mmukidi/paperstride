@@ -30,10 +30,16 @@ No worksheet data ever leaves the server.
 
 ### Input
 - Learner nickname, grade (Pre-K → Master's), age (3–26), free-text interests
+- Interest chips plus custom interest field
+- Struggling area chips
+- Today's goal selector
+- Time available selector
 
 ### AI Pipeline
 - **Blueprint call** — one LLM call designs the curriculum plan (subjects,
   question counts, skills, challenge level)
+- **Blueprint fallback** — if the local Ollama backend is offline, a deterministic
+  age/grade-aware plan is returned so the preview flow still works
 - **Passage bundle call** — one LLM call writes an original reading passage,
   6–8 vocabulary cards, and reading comprehension questions
 - **Deterministic fallback** — if any LLM call fails, static question banks
@@ -55,6 +61,8 @@ No worksheet data ever leaves the server.
 - Auto HTTPS via Caddy + DuckDNS
 - Git-tracked deployment (pull → rebuild → run)
 - Local Ollama inference (no external API key required)
+- Feature/deploy status checklist in `docs/FEATURE_STATUS.md`
+- Lightweight WebP hero image for faster first page load
 
 ---
 
@@ -172,6 +180,12 @@ Live progress steps shown during generation so the ~50s wait feels active:
 ---
 
 ## Deployment Process
+
+Before pushing or deploying, update `docs/FEATURE_STATUS.md` and run:
+
+```bash
+npm run predeploy
+```
 
 Always follow this three-step flow:
 

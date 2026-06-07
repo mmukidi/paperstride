@@ -5,14 +5,16 @@ PaperStride is a screen-free learning website for printable practice. The first 
 ## What is Included
 
 - Next.js landing page for PaperStride
-- Basic worksheet creator form
+- Worksheet creator form with age, grade, interests, learning needs, goal, and time available
+- Expert plan preview before worksheet generation
 - Server-generated printable HTML workbook response
-- Server-only Groq route for AI-assisted worksheet content
-- Generated hero image saved at `public/paperstride-hero.png`
+- Server-only Ollama route for local AI-assisted worksheet content
+- Deterministic plan and worksheet fallbacks when local AI is unavailable
+- Generated hero image saved as `public/paperstride-hero.webp`
 - Dockerfile for production builds
 - Docker Compose setup with Caddy for HTTPS
 - OCI deployment guide in `docs/oracle-cloud-deployment.md`
-- No-key sample HTML worksheet fallback for local testing
+- Feature and deploy status checklist in `docs/FEATURE_STATUS.md`
 
 ## Local Development
 
@@ -31,7 +33,13 @@ Then open `http://localhost:3000`.
 2. Point `paperstride.duckdns.org` or your chosen domain to the OCI public IP.
 3. Make sure OCI ingress rules allow TCP `80` and `443`.
 4. Set `NEXT_PUBLIC_SITE_URL` and `NEXT_PUBLIC_CONTACT_EMAIL` before building.
-5. Run Docker Compose on the server:
+5. Update `docs/FEATURE_STATUS.md`, then run the pre-deploy checks:
+
+```bash
+npm run predeploy
+```
+
+6. Run Docker Compose on the server:
 
 ```bash
 docker compose up -d --build
@@ -41,16 +49,20 @@ Full steps are in `docs/oracle-cloud-deployment.md`.
 
 ## Worksheet AI
 
-The worksheet API is available at `POST /api/worksheets`. It accepts a nickname, grade or level, age, and interests, then returns a complete static HTML workbook.
+The worksheet API is available at `POST /api/worksheets`. It accepts a nickname, grade or level, age, interests, learning needs, goal, time available, and an optional prebuilt blueprint, then returns a complete static HTML workbook.
 
-Set these on the server to use Groq:
+The expert-plan preview API is available at `POST /api/blueprint`. It uses local Ollama when available and falls back to a deterministic plan when Ollama is unavailable.
+
+Set these on the server to use the local Ollama backend:
 
 ```bash
-GROQ_API_KEY=your-groq-key
-GROQ_MODEL=llama-3.3-70b-versatile
+LLM_BASE_URL=http://host.docker.internal:11434/v1
+LLM_FAST_MODEL=llama3.2:3b
+LLM_MODEL=qwen2.5:7b-instruct
+LLM_PASSAGE_MODEL=qwen2.5:7b-instruct
 ```
 
-If `GROQ_API_KEY` is empty, the route returns a sample printable HTML worksheet so the site can still be tested without an AI key.
+If Ollama is unavailable, the route returns a deterministic printable HTML worksheet so the site can still be tested and used without paid AI services.
 
 ## Privacy Defaults
 
@@ -59,4 +71,4 @@ If `GROQ_API_KEY` is empty, the route returns a sample printable HTML worksheet 
 - No child emails or full names
 - The nickname is used only on the printable workbook heading
 - AI prompts use grade or level, age, and interest theme
-- `GROQ_API_KEY` is server-only and must never use a `NEXT_PUBLIC_` prefix
+- Local Ollama runs on the server; no learner data needs to leave the server

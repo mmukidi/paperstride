@@ -118,11 +118,14 @@ export async function POST(request: NextRequest) {
       headers: { "Cache-Control": "no-store", "X-Blueprint-Cache": "miss" }
     });
   } catch (err) {
-    console.error("Blueprint generation failed", err);
-    return Response.json(
-      { message: "Could not generate the expert plan right now. Please try again." },
-      { status: 503 }
-    );
+    console.warn("Blueprint generation failed; using deterministic fallback", err);
+    const fallback = defaultBlueprint(input);
+    return Response.json(fallback, {
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Blueprint-Cache": "fallback",
+      },
+    });
   }
 }
 

@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "start:standalone": "node .next/standalone/server.js",
+    "typecheck": "tsc --noEmit",
+    "predeploy": "npm run typecheck && npm run build"
   },
   "dependencies": {
     "next": "15.5.19",

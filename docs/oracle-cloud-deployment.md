@@ -87,8 +87,13 @@ Edit the values:
 SITE_DOMAIN=paperstride.duckdns.org
 NEXT_PUBLIC_SITE_URL=https://paperstride.duckdns.org
 NEXT_PUBLIC_CONTACT_EMAIL=your-email@example.com
-GROQ_API_KEY=your-groq-key-when-generation-is-added
-GROQ_MODEL=llama-3.3-70b-versatile
+LLM_BASE_URL=http://host.docker.internal:11434/v1
+LLM_FAST_MODEL=llama3.2:3b
+LLM_MODEL=qwen2.5:7b-instruct
+LLM_PASSAGE_MODEL=qwen2.5:7b-instruct
+OLLAMA_NUM_THREAD=4
+OLLAMA_KEEP_ALIVE=-1
+OLLAMA_NUM_CTX=4096
 ```
 
 > `.env` is gitignored and lives only on the server. Never commit it.
@@ -121,6 +126,12 @@ Also test from a phone using cellular data to confirm the page is reachable outs
 ## 7. Deploying Updates
 
 Every update follows a three-step flow: push to GitHub locally → pull on the server → rebuild Docker.
+
+Before pushing, update `docs/FEATURE_STATUS.md` and run:
+
+```bash
+npm run predeploy
+```
 
 ### Step 1 — Push from your local machine
 
@@ -178,11 +189,12 @@ Both lines should show the same commit hash. If they differ, re-run Step 2.
 - **`.env` is the only file that should differ** between local and server. It is gitignored and must be maintained manually on the server.
 - **Check `git status` on the server** if a pull is blocked — an uncommitted local edit on the server (e.g. a manual tweak) will prevent `git pull`. Fix with `git checkout -- <file>` then pull again.
 
-## Groq Safety Notes
+## Local AI Safety Notes
 
-- Keep `GROQ_API_KEY` only in `.env` on the server.
-- Never expose the key in browser code.
-- Worksheet prompts send grade or level, age, and interest theme.
+- Keep Ollama and `LLM_*` settings server-side only.
+- Never expose backend model URLs or private server settings in browser code.
+- Worksheet prompts send grade or level, age, learning need, and interest theme.
 - The learner nickname is used only in the printable workbook heading.
-- Do not send full names, student emails, or private learner notes.
-- If `GROQ_API_KEY` is empty, the site returns a sample printable HTML worksheet for testing.
+- Do not collect full names, student emails, or private learner notes.
+- If Ollama is unavailable, the site returns deterministic fallback plans and
+  printable HTML worksheets for testing and free operation.

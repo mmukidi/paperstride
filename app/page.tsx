@@ -46,7 +46,7 @@ export default function Home() {
       <section className="hero" id="top" aria-labelledby="hero-title">
         <Image
           className="hero-image"
-          src="/paperstride-hero.png"
+          src="/paperstride-hero.webp"
           alt=""
           fill
           priority
