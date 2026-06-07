@@ -79,6 +79,14 @@ const allowedGrades = new Set([
   "Master's"
 ]);
 
+function isHighSchoolOrAdult(input: WorksheetInput): boolean {
+  return input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
+}
+
+function isHistoryTheme(theme: string): boolean {
+  return /\b(history|historical|social studies|civics|civilization|ancient|medieval|modern|war|revolution|empire|archive|museum)\b/i.test(theme);
+}
+
 // Ollama-only backend — no external API dependency, no rate limits.
 // All inference runs on the local Oracle Cloud server.
 // We use Ollama's NATIVE /api/chat (not the OpenAI-compat /v1) so we can pin keep_alive,
@@ -655,7 +663,7 @@ Pedagogical principles to honor:
 - Developmental fit first: match attention span, reading load, and abstraction to the age.
 - Pre-K/K: short, playful, concrete, picture-supported; few subjects, more visuals.
 - Grades 1-5: build reading, vocabulary, number sense, writing mechanics, science curiosity, and logic with growing independence.
-- Grades 6-8: add multi-step reasoning, evidence, data interpretation, and clear written explanation across more subjects.
+- Grades 6-8: add multi-step reasoning, evidence, quantitative reasoning, and clear written explanation across more subjects.
 - Grades 9-12: include SAT-style reading evidence, vocabulary in context, algebraic and data reasoning, argument writing, and trap-answer elimination.
 - "questionCount" MUST equal the sum of the section "questionCount" values.
 - Every section must list the specific skills it tests.
@@ -782,18 +790,26 @@ function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
   const early = input.age <= 6;
   const elementary = input.age >= 7 && input.age <= 10;
   const middle = input.age >= 11 && input.age <= 14;
-  const high = input.age >= 15;
+  const high = isHighSchoolOrAdult(input);
+  const theme = input.interests.split(",")[0]?.trim() || "learning";
+  const history = isHistoryTheme(theme);
   const sections = defaultSectionPlan(input);
 
   return {
-    curriculumPath: "General standards-aligned mixed practice",
+    curriculumPath: history ? "History and evidence-centered mixed practice" : "General standards-aligned mixed practice",
     gradeExpectations: early
       ? "Practice concrete early literacy, counting, observation, patterns, fine-motor writing, and confidence."
       : elementary
-        ? "Practice reading comprehension, vocabulary, number sense, evidence, writing, and logic."
+        ? history
+          ? "Practice grade-level reading, timelines, source clues, vocabulary, number sense, writing, and cause-and-effect."
+          : "Practice reading comprehension, vocabulary, number sense, evidence, writing, and logic."
         : middle
-          ? "Practice multi-step reasoning, evidence, vocabulary in context, data interpretation, and clear explanations."
-          : "Practice SAT-ready reading evidence, vocabulary in context, algebraic reasoning, data interpretation, and argument writing.",
+          ? history
+            ? "Practice source reasoning, chronology, cause-and-effect, vocabulary in context, quantitative reasoning, and clear explanations."
+            : "Practice multi-step reasoning, evidence, vocabulary in context, quantitative reasoning, and clear explanations."
+          : history
+            ? "Practice advanced historical interpretation, source corroboration, causation, vocabulary in context, and argument writing."
+            : "Practice SAT-ready reading evidence, vocabulary in context, algebraic reasoning, quantitative interpretation, and argument writing.",
     pageTarget: early ? "1-2 A4 pages" : high ? "6-9 A4 pages" : middle ? "5-7 A4 pages" : "3-5 A4 pages",
     questionCount: sections.reduce((sum, section) => sum + section.questionCount, 0),
     sections,
@@ -827,6 +843,8 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
   const early = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
   const elementary = !early && input.age <= 10;
   const middle = !early && !elementary && input.age <= 14;
+  const theme = input.interests.split(",")[0]?.trim() || "learning";
+  const history = isHistoryTheme(theme);
 
   if (early) {
     return [
@@ -840,6 +858,16 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
   // Shape: a deep CORE (reading, writing, math) carries most of the work, then 1-2
   // SHORT enrichment sections add variety without diluting the core.
   if (elementary) {
+    if (history) {
+      return [
+        { subject: "Reading Comprehension", questionCount: 4, skills: ["main idea", "details", "sequence", "source clues"], focus: "A grade-level history passage with evidence questions." },
+        { subject: "Vocabulary in Context", questionCount: 3, skills: ["history words", "context clues", "using words"], focus: "Timeline and source vocabulary from the passage." },
+        { subject: "Social Studies and History", questionCount: 3, skills: ["timeline", "past and present", "cause and effect"], focus: "History questions about sources, order, and change over time." },
+        { subject: "Grammar and Writing", questionCount: 3, skills: ["sentence structure", "punctuation", "clear writing"], focus: "Write clear sentences about historical evidence." },
+        { subject: "Math Reasoning", questionCount: 2, skills: ["elapsed time", "word problems"], focus: "Simple timeline and museum-count problems." },
+        { subject: "Logic and Patterns", questionCount: 1, skills: ["sequence", "reasoning"], focus: "A timeline or evidence-order puzzle." }
+      ];
+    }
     return [
       // Core
       { subject: "Reading Comprehension", questionCount: 4, skills: ["main idea", "supporting detail", "sequence", "vocabulary in context"], focus: "An original theme passage with evidence questions." },
@@ -853,16 +881,38 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
   }
 
   if (middle) {
+    if (history) {
+      return [
+        { subject: "Reading Comprehension", questionCount: 5, skills: ["main idea", "evidence", "inference", "source perspective"], focus: "A substantial history passage with source-based inference." },
+        { subject: "Vocabulary in Context", questionCount: 3, skills: ["academic history vocabulary", "context clues"], focus: "Terms historians use to explain evidence." },
+        { subject: "Social Studies and History", questionCount: 4, skills: ["chronology", "cause and effect", "source reasoning"], focus: "Analyze sources, timelines, and historical claims." },
+        { subject: "Grammar and Writing", questionCount: 3, skills: ["revision", "explanation writing", "claim evidence reasoning"], focus: "Revise and explain a historical claim." },
+        { subject: "Math Reasoning", questionCount: 3, skills: ["timeline math", "ratios", "quantitative reasoning"], focus: "Use dates and counts to reason about historical change." },
+        { subject: "Critical Thinking", questionCount: 1, skills: ["synthesis", "argument"], focus: "Weigh two explanations for an event." }
+      ];
+    }
     return [
       // Core
       { subject: "Reading Comprehension", questionCount: 5, skills: ["main idea", "evidence", "inference", "tone", "author's purpose"], focus: "A substantial original passage with evidence and inference." },
       { subject: "Vocabulary in Context", questionCount: 3, skills: ["context clues", "shades of meaning"], focus: "Stronger words from the passage with examples." },
       { subject: "Grammar and Writing", questionCount: 3, skills: ["revision", "combining sentences", "explanation writing"], focus: "Revise and explain in clear writing." },
-      { subject: "Math Reasoning", questionCount: 5, skills: ["multi-step reasoning", "ratios", "data interpretation"], focus: "Multi-step problems and data reasoning." },
+      { subject: "Math Reasoning", questionCount: 5, skills: ["multi-step reasoning", "ratios", "quantitative reasoning"], focus: "Multi-step problems and real-world reasoning." },
       // Short enrichment
       { subject: "Science Investigation", questionCount: 2, skills: ["hypothesis", "variables", "evidence"], focus: "Interpret a short experiment." },
       { subject: "Logic and Patterns", questionCount: 1, skills: ["sequences", "logical reasoning"], focus: "A number or logic puzzle." },
       { subject: "Social Studies and History", questionCount: 1, skills: ["cause and effect", "source reasoning"], focus: "A decision-point or source question." }
+    ];
+  }
+
+  if (history) {
+    return [
+      // Core
+      { subject: "Reading Comprehension", questionCount: 6, skills: ["central claim", "source evidence", "inference", "tone", "structure", "comparing interpretations"], focus: "An advanced history passage with source and interpretation questions." },
+      { subject: "Vocabulary in Context", questionCount: 4, skills: ["historiography vocabulary", "precise meaning"], focus: "Academic history words tested in context." },
+      { subject: "Social Studies and History", questionCount: 5, skills: ["primary source analysis", "corroboration", "causation", "continuity and change"], focus: "Evaluate historical evidence and competing explanations." },
+      { subject: "Grammar and Writing", questionCount: 3, skills: ["concision", "claim evidence reasoning", "argument"], focus: "Revision and a short historical argument." },
+      { subject: "Math Reasoning", questionCount: 2, skills: ["timeline reasoning", "percentages", "quantitative interpretation"], focus: "Use dates and figures to test a historical claim." },
+      { subject: "Critical Thinking", questionCount: 2, skills: ["synthesis", "argument"], focus: "Connect evidence, interpretation, and uncertainty." }
     ];
   }
 
@@ -871,7 +921,7 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
     { subject: "Reading Comprehension", questionCount: 6, skills: ["central claim", "evidence", "inference", "tone", "structure", "comparing texts"], focus: "A substantial SAT-style original passage." },
     { subject: "Vocabulary in Context", questionCount: 3, skills: ["vocabulary in context", "precise meaning"], focus: "Academic words tested in context." },
     { subject: "Grammar and Writing", questionCount: 3, skills: ["concision", "evidence-based writing", "argument"], focus: "Revision and a short argument." },
-    { subject: "Math Reasoning", questionCount: 5, skills: ["algebraic reasoning", "percentages", "data interpretation"], focus: "Multi-step and data problems with real choices." },
+    { subject: "Math Reasoning", questionCount: 5, skills: ["algebraic reasoning", "percentages", "quantitative interpretation"], focus: "Multi-step quantitative problems with real choices." },
     // Short enrichment
     { subject: "Science Investigation", questionCount: 2, skills: ["data analysis", "controls", "inference"], focus: "Analyze experimental data." },
     { subject: "Logic and Patterns", questionCount: 1, skills: ["sequences", "abstract reasoning"], focus: "Decode a rule or pattern." },
@@ -1063,7 +1113,7 @@ function assembleWorksheet(
   const theme = escapeHtml(input.interests.split(",")[0]?.trim() || "learning");
   const allInterests = escapeHtml(input.interests);
   const grade = escapeHtml(input.grade);
-  const high = input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
+  const high = isHighSchoolOrAdult(input);
   const middle = !high && input.age >= 11;
   const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
   const answerContext = { high, isSpace: isSpaceTheme };
@@ -1077,6 +1127,7 @@ function assembleWorksheet(
         ? middleSchoolFallbackPassage(theme, allInterests)
         : elementaryFallbackPassage(theme, allInterests);
   const rawTheme = input.interests.split(",")[0]?.trim() || "your topic";
+  const history = isHistoryTheme(rawTheme);
   const bankVocab = bankVocabFor(high, middle, rawTheme);
   // Use AI vocabulary when present, but top up from the bank so there are always enough
   // cards (a thin AI vocab list otherwise leaves the worksheet with too few words).
@@ -1090,7 +1141,7 @@ function assembleWorksheet(
   }
 
   // Theme-aware question banks, one per canonical subject.
-  const banks = fallbackQuestionBanks({ high, theme, vocabWords });
+  const banks = fallbackQuestionBanks({ high, middle, history, theme, vocabWords });
 
   // Vocabulary questions are templated from the vocabulary words (AI or bank).
   const vocabQuestions: GeneratedQuestion[] = vocabWords.map(([word]) => ({
@@ -1303,6 +1354,40 @@ function assembleWorksheet(
 // The AI normally pulls words from the passage; this keeps the words age-appropriate
 // (not the old easy/meta set) and frames each example with the learner's topic.
 function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][] {
+  if (isHistoryTheme(theme) && high) {
+    return [
+      ["historiography", "the study of how history is written and interpreted", "Historiography asks why two scholars may explain the same revolution differently.", "Historiography = history about history-writing."],
+      ["corroborate", "to confirm a claim by checking it against another source", "A historian corroborates a diary entry with tax records and newspaper reports.", "Corroborate = confirm with another source."],
+      ["causation", "the relationship between causes and effects", "Causation is hard to prove when economic, political, and cultural changes overlap.", "Causation = why something happened."],
+      ["continuity", "something that stays mostly the same over time", "The law changed, but some patterns of land ownership showed continuity.", "Continuity = what keeps going."],
+      ["primary source", "a source created during the time being studied", "A court record from 1892 is a primary source for that case.", "Primary = from the period itself."],
+      ["revisionism", "a new interpretation that challenges an older historical explanation", "Revisionism can be valuable when new evidence changes the picture.", "Revision = looking again."],
+      ["contextualize", "to place evidence within its time, place, and conditions", "To contextualize the speech, examine who heard it and what crisis came before it.", "Context = the world around the source."],
+      ["archival", "related to records preserved for research", "Archival evidence can reveal ordinary lives missing from official histories.", "Archive = stored records."]
+    ];
+  }
+  if (isHistoryTheme(theme) && middle) {
+    return [
+      ["chronology", "the order in which events happen", "A chronology helps explain which event came before the reform.", "Chronology = time order."],
+      ["artifact", "an object made or used by people in the past", "A cracked bowl can be an artifact that shows how people cooked.", "Artifact = object evidence."],
+      ["primary source", "a source from the time being studied", "A soldier's letter is a primary source about the war.", "Primary = from the time."],
+      ["perspective", "a point of view shaped by experience", "Two witnesses may describe the same march from different perspectives.", "Perspective = viewpoint."],
+      ["migration", "movement from one place to another", "Migration changed the size and culture of the city.", "Migration = people moving."],
+      ["cause", "something that helps make an event happen", "A drought can be one cause of migration.", "Cause = why it happened."],
+      ["evidence", "facts or details used to support a claim", "A historian needs evidence before making a claim.", "Evidence = proof you can point to."],
+      ["bias", "a preference that can make a source less balanced", "A campaign poster may show bias because it wants voters to agree.", "Bias = one-sided lean."]
+    ];
+  }
+  if (isHistoryTheme(theme)) {
+    return [
+      ["timeline", "a line that shows events in order", "The class made a timeline of the town's first school.", "Timeline = events in order."],
+      ["source", "something that gives information", "An old photo can be a source about the past.", "Source = where information comes from."],
+      ["artifact", "an object from the past", "The museum kept an artifact from the first train station.", "Artifact = a past object."],
+      ["event", "something important that happened", "The bridge opening was a big event for the town.", "Event = something that happened."],
+      ["community", "a group of people who live or work together", "A community can change when a new library opens.", "Community = people together."],
+      ["evidence", "a clue or fact that helps prove an idea", "The date on the letter is evidence.", "Evidence = proof clue."]
+    ];
+  }
   if (high) {
     return [
       ["nuance", "a small but important difference in meaning", `A strong essay captures the nuance in a debate about ${theme}.`, "Nuance = a subtle shade of meaning."],
@@ -1338,6 +1423,14 @@ function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][]
 }
 
 function highSchoolFallbackPassage(theme: string): string {
+  if (isHistoryTheme(theme)) {
+    return `<p><strong>Passage A:</strong> Advanced history work begins with a deceptively simple question: what would count as convincing evidence? A chronicle may name a ruler as the cause of a reform, while tax records, migration tables, and court petitions suggest that pressure had been building for decades. The strongest historical argument does not merely collect impressive details. It explains how each source was produced, whose interests it served, what it leaves out, and how it changes when placed beside other evidence. That process is called corroboration, and it is one reason historical interpretation is more demanding than memorizing dates.</p>
+  <p>Consider a city that expanded its public schools between 1880 and 1910. One interpretation might credit a mayor who promised modern classrooms. A second might emphasize factory owners who wanted literate workers. A third might point to immigrant families who organized petitions after their children were turned away from crowded schools. Each interpretation may contain truth, but none is complete until the historian tests it against the record. Election speeches reveal ambition. Budgets reveal priorities. Attendance ledgers show who was actually served. Petitions preserve voices that official reports sometimes ignore. The historian's task is to decide how these fragments fit together without pretending the evidence is cleaner than it is.</p>
+  <p><strong>Passage B:</strong> Chronology also matters. If the petitions appeared before the mayor's speech, they may have shaped the promise instead of merely responding to it. If school spending rose only after a new tax law, fiscal policy becomes part of the explanation. If factories had already begun requiring reading tests for apprentices, economic pressure may have reinforced public demand. Causation in history is rarely a single arrow. It is usually a network of conditions, choices, constraints, and unintended consequences. Strong historians identify the most important causes while admitting what the evidence cannot prove.</p>
+  <p>This is why historical thinking remains useful beyond a classroom. It trains a reader to resist simple stories, especially when those stories flatter one group or erase another. It also makes uncertainty productive. An unanswered question is not a failure; it is a research path. A careful scholar can write, "The evidence strongly suggests," "This source complicates," or "This explanation is plausible but incomplete." Those phrases are not weak. They are honest. They show that the writer understands both the power and the limits of the archive.</p>
+  <p>For a learner interested in ${theme}, the goal is not to sound impressive by using difficult words. The goal is to use those words to think more precisely. Historiography asks how explanations change over time. Contextualization asks what else was happening when a source was created. Continuity and change ask what transformed and what endured. When a student connects these habits to a clear claim, the worksheet becomes more than practice. It becomes training in how to build an argument that can stand up to evidence.</p>`;
+  }
+
   return `<p><strong>Passage A:</strong> Coaches, inventors, and historians often disagree about what makes a person improve. One group praises natural talent, another praises technology, and a third points to discipline. The most useful answer is less dramatic: improvement usually comes from feedback that is specific enough to change the next attempt. A basketball player who only hears "shoot better" receives criticism, but not instruction. A player who learns that the elbow is drifting outward, that the release is late, and that fatigue changes foot placement receives information that can be tested. The difference matters because feedback becomes powerful only when it can guide action.</p>
   <p>Modern technology can make feedback faster. A camera can freeze a shooting motion, a spreadsheet can reveal which practice days were most efficient, and a robot can repeat the same movement without boredom. Yet tools do not replace judgment. A device may show that a student answered vocabulary questions quickly, but it cannot always tell whether the student understood the passage or merely recognized familiar words. A chart can show that accuracy improved from 68 percent to 83 percent, but the learner still has to ask what changed: more time, better notes, easier questions, or a stronger strategy. Data begins the conversation; thinking finishes it.</p>
   <p>That is why disciplined learners treat mistakes as evidence, not as proof of failure. When they miss a reading question, they do not simply memorize the correct letter. They ask whether the wrong answer was too broad, too extreme, unsupported, or tempting because it repeated a phrase from the passage. When they miss a math question, they ask whether the error came from the setup, the calculation, the units, or the final interpretation. This habit is especially useful on SAT-style tests because many wrong choices are plausible. They are designed to attract students who read quickly but not carefully.</p>
@@ -1347,6 +1440,13 @@ function highSchoolFallbackPassage(theme: string): string {
 }
 
 function middleSchoolFallbackPassage(theme: string, interests: string): string {
+  if (isHistoryTheme(theme)) {
+    return `<p>A historian is a detective of the past, but the clues are not always simple. One source might be a letter, another might be a map, and another might be a broken tool found near an old road. Each source can teach something, but each source also has limits. A letter tells one person's perspective. A map may show roads and rivers, but not the people who could not afford to travel. An artifact shows what people made or used, but it may not explain what they believed.</p>
+  <p>Imagine a class studying why a town grew quickly after a railroad arrived. The easiest answer is, "The railroad caused the growth." A stronger answer looks for evidence. Did stores open before or after the railroad station? Did more families move into town? Did farmers ship crops farther away? Did some people lose land when the tracks were built? A timeline helps the class put events in order, but the students still need to explain cause and effect.</p>
+  <p>The class also compares perspectives. A shop owner might remember the railroad as a success because more customers arrived. A farmer might remember it as expensive because land prices changed. A worker might remember dangerous jobs building the tracks. These memories do not all cancel each other out. Together, they help students see that history is bigger than one person's story.</p>
+  <p>Because the learner also mentioned ${interests}, the worksheet connects history to real interests and real choices. Good historical thinking asks students to read carefully, use dates accurately, notice bias, and explain claims in their own words. The goal is not to memorize every detail. The goal is to use evidence to make a fair explanation of what changed, what stayed the same, and why it mattered.</p>`;
+  }
+
   return `<p>Few subjects reward curiosity like ${theme}. What looks simple from a distance usually turns out to be full of moving parts, careful choices, and surprising connections. People who study ${theme} closely notice details that a casual observer walks right past: a small change in conditions, a pattern that repeats, or a number that does not quite fit. Those details are where the real questions begin, and where ${theme} stops being just a hobby and starts becoming an investigation.</p>
   <p>Consider how someone exploring ${theme} actually works. They begin by observing carefully and writing down what they see, separating what is certain from what is only a guess. Then they look for relationships: when one thing increases, does another rise or fall? Does a result repeat, or was it luck? Because this learner is also interested in ${interests}, they start to notice that ideas from one field can explain another — how forces move objects, how stories shape memory, and how numbers reveal what the eye alone would miss. Connections like these make ${theme} far richer than any single fact about it.</p>
   <p>Progress in ${theme} rarely comes from getting everything right the first time. It comes from testing an idea, watching it fall short in some small way, and asking exactly what went wrong. A measurement might be off, a step might be skipped, or a hidden assumption might be wrong. Each correction is a clue, and clues add up. Over weeks and months, a beginner who keeps asking precise questions can come to understand ${theme} more deeply than someone who only memorized facts about it.</p>
@@ -1354,6 +1454,13 @@ function middleSchoolFallbackPassage(theme: string, interests: string): string {
 }
 
 function elementaryFallbackPassage(theme: string, interests: string): string {
+  if (isHistoryTheme(theme)) {
+    return `<p>Maya's class visits a small history room at the library. On the first table, the students see an old photograph, a train ticket, and a handwritten letter. Their teacher says, "These are sources. A source gives us information about the past." Maya looks closely at the photo. It shows a street with horses, a tiny grocery store, and children standing near a wooden schoolhouse.</p>
+  <p>The class makes a timeline. First, the schoolhouse opened in 1908. Next, the train station opened in 1912. Then a new bridge opened in 1916. Maya notices that each event helped the community in a different way. The school helped children learn. The train helped people and goods move. The bridge helped neighbors visit each other more safely.</p>
+  <p>Maya also learns that one source does not tell the whole story. The photograph shows the schoolhouse, but it does not say how the children felt. The letter says one family was excited about the train, but another family may have felt worried about changes in the town. Good historians ask questions, compare sources, and use evidence before they decide what happened.</p>
+  <p>At the end of the visit, Maya writes one clear sentence: "Our community changed when schools, trains, and bridges helped people connect." She underlines the word evidence because every good history answer needs proof. Then she adds one question she still has: "Who built the bridge, and what tools did they use?" A new question means the learning can keep going.</p>`;
+  }
+
   if (theme.toLowerCase().includes("space")) {
     const hasSoccer = interests.toLowerCase().includes("soccer");
     const designParagraph = hasSoccer
@@ -1478,6 +1585,14 @@ function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): str
 }
 
 function mathAnswerFor(text: string): string | null {
+  if (/1880 and .*1895/i.test(text)) return "15 years.";
+  if (/\$40,000 to \$58,000/i.test(text)) return "$18,000 increase; more evidence is needed because spending alone does not prove outcomes improved.";
+  if (/120 letters.*35 percent/i.test(text)) return "42 letters.";
+  if (/petitions in 1888/i.test(text)) return "The petitions came first; that timing could mean public demand shaped later speeches and budgets.";
+  if (/4 shelves with 6 artifacts/i.test(text)) return "24 artifacts.";
+  if (/1908 and .*1912/i.test(text)) return "4 years later.";
+  if (/1908, 1912, 1916/i.test(text)) return "1920. The pattern adds 4 years.";
+  if (/12 source cards/i.test(text)) return "27 source cards.";
   if (/Mission Data table/i.test(text)) return "Full strategy had the best accuracy at 83 percent.";
   if (/4 sets of 6/i.test(text)) return "24 cards.";
   if (/3, 6, 12, 24/i.test(text)) return "48 and 96.";
@@ -1491,6 +1606,14 @@ function mathAnswerFor(text: string): string | null {
 }
 
 function mathExplanationFor(text: string): string | null {
+  if (/1880 and .*1895/i.test(text)) return "Subtract the earlier year from the later year: 1895 - 1880 = 15.";
+  if (/\$40,000 to \$58,000/i.test(text)) return "Subtract 40,000 from 58,000. A historian still checks whether the extra money changed attendance, access, or outcomes.";
+  if (/120 letters.*35 percent/i.test(text)) return "35 percent of 120 is 0.35 x 120 = 42.";
+  if (/petitions in 1888/i.test(text)) return "Chronology matters because an earlier petition could have influenced a later speech or budget decision.";
+  if (/4 shelves with 6 artifacts/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
+  if (/1908 and .*1912/i.test(text)) return "Subtract 1908 from 1912 to find 4 years.";
+  if (/1908, 1912, 1916/i.test(text)) return "Each date is 4 years later, so 1916 + 4 = 1920.";
+  if (/12 source cards/i.test(text)) return "Add the two days: 12 + 15 = 27.";
   if (/Mission Data table/i.test(text)) return "Compare the Accuracy column: 68 percent, 77 percent, and 83 percent. The largest number is 83 percent.";
   if (/4 sets of 6/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
   if (/3, 6, 12, 24/i.test(text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
@@ -1526,6 +1649,14 @@ function logicExplanationFor(text: string): string | null {
 function mathChoicesFor(question: { section: string; text: string }): string[] | null {
   if (question.section !== "Math Reasoning") return null;
   const text = question.text;
+  if (/1880 and .*1895/i.test(text)) return ["5 years", "15 years", "25 years", "95 years"];
+  if (/\$40,000 to \$58,000/i.test(text)) return ["$8,000", "$18,000", "$22,000", "$98,000"];
+  if (/120 letters.*35 percent/i.test(text)) return ["24", "35", "42", "85"];
+  if (/petitions in 1888/i.test(text)) return ["The petition", "The speech", "The budget growth", "They happened together"];
+  if (/4 shelves with 6 artifacts/i.test(text)) return ["10", "20", "24", "30"];
+  if (/1908 and .*1912/i.test(text)) return ["2", "4", "8", "12"];
+  if (/1908, 1912, 1916/i.test(text)) return ["1918", "1920", "1922", "1924"];
+  if (/12 source cards/i.test(text)) return ["17", "25", "27", "30"];
   if (/Mission Data table/i.test(text)) return ["Quick review", "Evidence notes", "Full strategy", "They were all the same"];
   if (/4 sets of 6/i.test(text)) return ["18", "24", "10", "36"];
   if (/3, 6, 12, 24/i.test(text)) return ["36 and 48", "48 and 96", "30 and 36", "48 and 72"];
@@ -1580,12 +1711,41 @@ function socialAnswerFor(text: string): string {
 // distinct items to cover the planned section counts without repeating.
 function fallbackQuestionBanks(args: {
   high: boolean;
+  middle: boolean;
+  history: boolean;
   theme: string;
   vocabWords: string[][];
 }): Record<string, string[]> {
-  const { high, theme, vocabWords } = args;
+  const { high, middle, history, theme, vocabWords } = args;
 
-  const reading = high
+  const reading = history && high
+    ? [
+        "Which statement best captures the central claim of the passage about historical evidence?",
+        "Which source from the passage would best corroborate the claim that families helped shape school expansion?",
+        "In Passage B, why does chronology change the strength of a historical explanation?",
+        "Which interpretation is plausible but incomplete unless tested against additional evidence?",
+        "How does the author's discussion of uncertainty refine the argument about historical scholarship?",
+        "Which sentence best shows that historical causation can involve several overlapping forces?"
+      ]
+    : history && middle
+      ? [
+          "What is the main idea of the passage about how historians use sources?",
+          "Which detail best explains why one source may not tell the whole story?",
+          "How does the railroad example show cause and effect?",
+          "Why do different people remember the same event differently?",
+          "What should a student do before deciding that one event caused another?",
+          "Write one question a historian could ask after reading this passage."
+        ]
+      : history
+        ? [
+            "What is the main idea of Maya's library visit? Point to one sentence that proves it.",
+            "Which object in the passage is a source: the photograph, the bridge, or the classroom wall?",
+            "Put these events in order: bridge opens, schoolhouse opens, train station opens.",
+            "Why does Maya need more than one source to understand the past?",
+            "What question does Maya still have at the end of the passage?",
+            "Write one sentence explaining how the community changed."
+          ]
+        : high
     ? [
         "Which statement best captures the central claim of the passage?",
         "Which sentence from the passage gives the strongest evidence that technology can support judgment without replacing it?",
@@ -1616,7 +1776,22 @@ function fallbackQuestionBanks(args: {
     `Choose and explain: "Their / There / They're going to practice ${theme} today."`
   ];
 
-  const math = high
+  const math = history && high
+    ? [
+        "A reform began in 1880 and a major funding law passed in 1895. How many years separated the two events?",
+        "A city budget rose from $40,000 to $58,000. What was the dollar increase, and why might a historian still need more evidence before claiming schools improved?",
+        "A source collection has 120 letters. If 35 percent mention crowded classrooms, how many letters mention that problem?",
+        "A timeline shows petitions in 1888, a mayor's speech in 1890, and budget growth in 1892. Which event came first, and how could that affect causation?"
+      ]
+    : history
+      ? [
+          "A museum has 4 shelves with 6 artifacts on each shelf. How many artifacts are there in all?",
+          "The schoolhouse opened in 1908 and the train station opened in 1912. How many years later did the train station open?",
+          "A timeline goes 1908, 1912, 1916, ___. What year comes next if the pattern continues?",
+          "A class reads 12 source cards on Monday and 15 on Tuesday. How many source cards did they read in all?",
+          "There are 30 minutes for 5 history stations. How many minutes can each station take?"
+        ]
+      : high
     ? [
         "A training app shows that a player made 42 of 60 shots in week one and improved the success rate by 15 percentage points in week two. What was the week two success rate?",
         "A robotics club has a fixed budget of $360. Sensors cost $18 each and practice field panels cost $24 each. If the club buys 8 sensors, how many panels can it buy with the remaining budget?",
@@ -1640,12 +1815,34 @@ function fallbackQuestionBanks(args: {
     `Describe one cause-and-effect you might see while exploring ${theme}.`
   ];
 
-  const social = [
-    `Name one way ${theme} (or an interest like it) could change life in a town, and who it helps.`,
-    "A leader and an invention both change a city. What evidence shows which mattered more?",
-    `Why might two people remember the same ${theme} event differently?`,
-    `Describe one fair rule a ${theme} club should make, and why.`
-  ];
+  const social = history && high
+    ? [
+        "Choose two source types from the passage and explain how they would corroborate or challenge each other.",
+        "Explain why a single-hero explanation of a reform may be persuasive but historically weak.",
+        "Write a claim about school expansion that includes one cause and one limitation of the evidence.",
+        "How would contextualizing a mayor's speech change the way a historian interprets it?",
+        "Identify one continuity and one change in the passage's school-expansion example."
+      ]
+    : history && middle
+      ? [
+          "Explain why a timeline helps but does not fully prove cause and effect.",
+          "Compare the shop owner and worker perspectives. What does each person notice?",
+          "Choose one artifact or source from the passage and explain what it can and cannot prove.",
+          "Write a claim about why the town grew, then name one piece of evidence you would need."
+        ]
+      : history
+        ? [
+            "What is one source Maya sees in the history room?",
+            "How did the train station help the community?",
+            "Why might two families feel differently about the same town change?",
+            "Draw or write a three-event timeline from the passage."
+          ]
+        : [
+            `Name one way ${theme} (or an interest like it) could change life in a town, and who it helps.`,
+            "A leader and an invention both change a city. What evidence shows which mattered more?",
+            `Why might two people remember the same ${theme} event differently?`,
+            `Describe one fair rule a ${theme} club should make, and why.`
+          ];
 
   const logic = high
     ? [
@@ -1661,7 +1858,15 @@ function fallbackQuestionBanks(args: {
         "Sort these into two groups and name the rule you used: circle, ball, square, box, triangle, kite."
       ];
 
-  const critical = [
+  const critical = history && high
+    ? [
+        "Compare two explanations for a historical change and explain which one the available evidence supports more strongly.",
+        "Write a brief research plan for testing whether a political speech caused a policy change.",
+        "Explain why uncertainty can make a historical argument stronger rather than weaker.",
+        "Name one missing source that would make the passage's school-expansion case more complete.",
+        "Write a two-sentence thesis that uses causation, evidence, and limitation."
+      ]
+    : [
     `Explain one way ${theme} can build careful reading and evidence habits.`,
     `Write a short plan to get better at ${theme} using practice and feedback.`,
     `Compare two strategies a ${theme} learner could use, and say which is stronger and why.`,
@@ -2046,9 +2251,47 @@ function logicDeduction(theme: string, rng: () => number): FunActivity {
 }
 
 function funZoneBlock(input: WorksheetInput, theme: string): { html: string; answersHtml: string } {
-  const rng = seededRng(`${input.childName}|${input.interests}|${input.grade}`);
+  const generationSeed = `${Date.now()}|${Math.random().toString(36).slice(2)}`;
+  const rng = seededRng(`${input.childName}|${input.interests}|${input.grade}|${generationSeed}`);
   const young = input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten";
   const elementary = !young && input.age <= 10;
+  const high = isHighSchoolOrAdult(input);
+
+  if (high) {
+    const history = isHistoryTheme(theme);
+    const challenges: FunActivity[] = history
+      ? [
+          {
+            html: `<p><strong>Source Triangulation.</strong> A speech praises a school reform, a budget ledger shows funding rose two years later, and a petition asked for classrooms before both events.</p><p>Rank the sources by how useful they are for proving causation, then defend your ranking.</p><div class="write"></div>`,
+            answer: "A strong answer ranks the petition and budget ledger highly because they help test timing and action; the speech is useful but may be self-promotional."
+          },
+          {
+            html: `<p><strong>Historiography Move.</strong> Write one sentence that challenges this simple claim: \"The mayor caused the entire reform.\"</p><p class="hint">Use one of these words: corroborate, context, causation, or continuity.</p><div class="write"></div>`,
+            answer: "Sample: To establish causation, a historian would need to corroborate the mayor's speech with petitions, budgets, and records showing what changed after the speech."
+          },
+          {
+            html: `<p><strong>Archive Gap.</strong> Name one missing source that could change the interpretation of the event, and explain why it matters.</p><div class="write"></div>`,
+            answer: "Sample: Student attendance records could show whether the reform reached the children it claimed to help."
+          }
+        ]
+      : [
+          patternPuzzleHard(rng),
+          logicDeduction(theme, rng),
+          {
+            html: `<p><strong>Scholar Challenge.</strong> Write a two-sentence claim about ${escapeHtml(theme)}. Sentence 1 must make a claim; sentence 2 must name evidence that would test it.</p><div class="write"></div>`,
+            answer: "Strong answers make a specific claim and identify checkable evidence rather than opinion."
+          }
+        ];
+    const cards = challenges.map((a) => `<article class="card fun-card">${a.html}</article>`).join("");
+    const answers = challenges.map((a) => `<p>${escapeHtml(a.answer)}</p>`).join("");
+
+    return {
+      html: `<h2>Extension Challenge</h2>
+  <p class="meta">A short stretch task for advanced reasoning, tied to ${escapeHtml(theme)}.</p>
+  <section class="grid">${cards}</section>`,
+      answersHtml: `<article class="answer" data-funzone="true"><h3>Extension Challenge — Sample Answers</h3>${answers}</article>`
+    };
+  }
 
   // Build a small word list from the learner's interests plus friendly fillers.
   const interestWords = input.interests

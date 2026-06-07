@@ -406,12 +406,20 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
   const elem   = input.age >= 7 && input.age <= 10;
   const middle = input.age >= 11 && input.age <= 14;
   const theme  = input.interests.split(",")[0]?.trim() || "learning";
+  const history = /\b(history|historical|social studies|civics|civilization|ancient|medieval|modern|war|revolution|empire|archive|museum)\b/i.test(theme);
 
   const sections: BlueprintSection[] = early ? [
     { subject:"Reading Comprehension", questionCount:2, skills:["main idea","picture clues"], focus:"Short story tied to interests.", isWeakArea:false, interestConnection:`Uses ${theme} as the story setting.` },
     { subject:"Vocabulary in Context",  questionCount:2, skills:["new words","matching"],       focus:"Friendly theme words.",           isWeakArea:false, interestConnection:`Words from the ${theme} story.` },
     { subject:"Math Reasoning",         questionCount:3, skills:["counting","comparing"],       focus:"Counting with objects.",         isWeakArea:false, interestConnection:`Count ${theme} objects.` },
     { subject:"Logic and Patterns",     questionCount:1, skills:["patterns","sorting"],         focus:"Simple pattern puzzle.",         isWeakArea:false, interestConnection:`${theme}-themed shapes.` },
+  ] : elem && history ? [
+    { subject:"Reading Comprehension", questionCount:4, skills:["main idea","details","sequence","source clues"], focus:"Grade-level history passage with evidence.", isWeakArea:false, interestConnection:`Passage about ${theme} sources and timelines.` },
+    { subject:"Vocabulary in Context",  questionCount:3, skills:["timeline","source","artifact"], focus:"History words from the passage.", isWeakArea:false, interestConnection:`Words historians use when studying ${theme}.` },
+    { subject:"Social Studies and History", questionCount:3, skills:["timeline","past and present","cause and effect"], focus:"Sources, order, and change over time.", isWeakArea:false, interestConnection:`${theme} evidence questions.` },
+    { subject:"Grammar and Writing", questionCount:3, skills:["sentences","punctuation"], focus:"Clear sentences about evidence.", isWeakArea:false, interestConnection:`Writing about ${theme}.` },
+    { subject:"Math Reasoning", questionCount:2, skills:["elapsed time","word problems"], focus:"Timeline and museum-count problems.", isWeakArea:false, interestConnection:`Dates and artifacts from ${theme}.` },
+    { subject:"Logic and Patterns", questionCount:1, skills:["sequence","reasoning"], focus:"Timeline order puzzle.", isWeakArea:false, interestConnection:`Put ${theme} events in order.` },
   ] : elem ? [
     { subject:"Reading Comprehension", questionCount:3, skills:["main idea","detail","vocab"],  focus:"Original passage with evidence.", isWeakArea:false, interestConnection:`Passage about ${theme}.` },
     { subject:"Vocabulary in Context",  questionCount:3, skills:["definitions","context"],       focus:"Words from the passage.",         isWeakArea:false, interestConnection:`Academic words in ${theme} context.` },
@@ -419,6 +427,13 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     { subject:"Grammar and Writing",    questionCount:2, skills:["sentences","punctuation"],     focus:"Fix-and-write practice.",         isWeakArea:false, interestConnection:`Writing about ${theme}.` },
     { subject:"Science Investigation",  questionCount:2, skills:["observation","evidence"],      focus:"Small investigation.",           isWeakArea:false, interestConnection:`Science connected to ${theme}.` },
     { subject:"Logic and Patterns",     questionCount:1, skills:["patterns","reasoning"],        focus:"Pattern or logic puzzle.",       isWeakArea:false, interestConnection:`${theme}-themed puzzle.` },
+  ] : middle && history ? [
+    { subject:"Reading Comprehension", questionCount:5, skills:["main idea","evidence","inference","source perspective"], focus:"Substantial history passage.", isWeakArea:false, interestConnection:`Passage deeply tied to ${theme}.` },
+    { subject:"Vocabulary in Context", questionCount:3, skills:["chronology","artifact","primary source"], focus:"Academic history vocabulary.", isWeakArea:false, interestConnection:`${theme} source vocabulary.` },
+    { subject:"Social Studies and History", questionCount:4, skills:["chronology","cause and effect","source reasoning"], focus:"Analyze timelines and claims.", isWeakArea:false, interestConnection:`Historical reasoning about ${theme}.` },
+    { subject:"Grammar and Writing", questionCount:3, skills:["revision","claim evidence reasoning"], focus:"Revise and explain a historical claim.", isWeakArea:false, interestConnection:`Writing about ${theme}.` },
+    { subject:"Math Reasoning", questionCount:3, skills:["timeline math","ratios"], focus:"Quantitative history reasoning.", isWeakArea:false, interestConnection:`Use dates and counts from ${theme}.` },
+    { subject:"Critical Thinking", questionCount:1, skills:["synthesis","argument"], focus:"Weigh two explanations.", isWeakArea:false, interestConnection:`Compare interpretations of ${theme}.` },
   ] : middle ? [
     { subject:"Reading Comprehension", questionCount:4, skills:["main idea","evidence","inference","tone"], focus:"Substantial passage with evidence.", isWeakArea:false, interestConnection:`Passage deeply tied to ${theme}.` },
     { subject:"Vocabulary in Context",  questionCount:3, skills:["context clues","shades"],                 focus:"Stronger words from passage.",      isWeakArea:false, interestConnection:`Academic vocab in ${theme} context.` },
@@ -427,6 +442,13 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     { subject:"Science Investigation",  questionCount:2, skills:["hypothesis","variables"],                 focus:"Interpret an experiment.",          isWeakArea:false, interestConnection:`${theme} science experiment.` },
     { subject:"Logic and Patterns",     questionCount:2, skills:["sequences","reasoning"],                  focus:"Number and logic puzzles.",         isWeakArea:false, interestConnection:`Logic connected to ${theme}.` },
     { subject:"Social Studies and History", questionCount:1, skills:["cause and effect"],                   focus:"A decision-point question.",        isWeakArea:false, interestConnection:`History/society angle of ${theme}.` },
+  ] : history ? [
+    { subject:"Reading Comprehension", questionCount:6, skills:["central claim","source evidence","inference","comparing interpretations"], focus:"Advanced history passage.", isWeakArea:false, interestConnection:`Complex ${theme} historical texts.` },
+    { subject:"Vocabulary in Context", questionCount:4, skills:["historiography vocabulary","precise meaning"], focus:"Academic history words.", isWeakArea:false, interestConnection:`${theme} scholarly vocabulary.` },
+    { subject:"Social Studies and History", questionCount:5, skills:["primary source analysis","corroboration","causation"], focus:"Evaluate evidence and explanations.", isWeakArea:false, interestConnection:`Source analysis for ${theme}.` },
+    { subject:"Grammar and Writing", questionCount:3, skills:["concision","claim evidence reasoning","argument"], focus:"Short historical argument.", isWeakArea:false, interestConnection:`Writing about ${theme}.` },
+    { subject:"Math Reasoning", questionCount:2, skills:["timeline reasoning","percentages"], focus:"Quantitative interpretation.", isWeakArea:false, interestConnection:`Dates and figures in ${theme}.` },
+    { subject:"Critical Thinking", questionCount:2, skills:["synthesis","argument"], focus:"Interpretation and uncertainty.", isWeakArea:false, interestConnection:`Historiography and ${theme}.` },
   ] : [
     { subject:"Reading Comprehension",      questionCount:5, skills:["central claim","evidence","inference","tone"], focus:"SAT-style passages.",        isWeakArea:false, interestConnection:`Complex ${theme} texts.` },
     { subject:"Vocabulary in Context",       questionCount:3, skills:["vocabulary in context","precise meaning"],      focus:"Academic words in context.", isWeakArea:false, interestConnection:`${theme} academic vocabulary.` },
@@ -446,11 +468,11 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     totalQuestions,
     challengeProfile:   "3 confidence-builders, balanced core, 2 stretch",
     motivationStrategy: `Use ${theme} as the mission context for every section.`,
-    curriculumPath:     "General standards-aligned mixed practice",
+    curriculumPath:     history ? "History and evidence-centered mixed practice" : "General standards-aligned mixed practice",
     gradeExpectations:  early ? "Concrete early literacy, counting, and patterns."
-                      : elem  ? "Reading comprehension, vocabulary, number sense, writing, and logic."
-                      : middle? "Multi-step reasoning, evidence, and clear explanations."
-                      :         "SAT-ready reading, vocabulary in context, and algebraic reasoning.",
+                      : elem  ? history ? "Reading comprehension, timelines, source clues, vocabulary, writing, and number sense." : "Reading comprehension, vocabulary, number sense, writing, and logic."
+                      : middle? history ? "Source reasoning, chronology, cause-and-effect, vocabulary, and clear explanations." : "Multi-step reasoning, evidence, and clear explanations."
+                      :         history ? "Advanced historical interpretation, corroboration, causation, and argument writing." : "SAT-ready reading, vocabulary in context, and algebraic reasoning.",
     pageTarget:         early ? "1–2 A4 pages" : elem ? "3–5 A4 pages" : middle ? "5–7 A4 pages" : "6–9 A4 pages",
     challengeLevel:     middle || !early ? "balanced" : "gentle",
     subjectMix:         sections.map(s => s.subject),
@@ -463,7 +485,7 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     reading:   { wordCount: early ? 80 : elem ? 280 : middle ? 460 : 650, topic: `${theme} investigation`, lexileTarget: early ? "400L" : elem ? "680L" : middle ? "800L" : "1000L" },
     vocabulary:{ wordCount: early ? 3 : elem ? 5 : middle ? 6 : 8 },
     sections,
-    funZone:   { activities: early ? ["pattern puzzle","connect the dots"] : ["word search","pattern puzzle","crack the code"] },
+    funZone:   { activities: early ? ["pattern puzzle","connect the dots"] : !middle && !history && input.age <= 10 ? ["word search","pattern puzzle","crack the code"] : ["extension challenge","source reasoning","logic stretch"] },
     parentNote: input.strugglingWith.length
       ? `Today's worksheet focuses on: ${input.strugglingWith.join(", ")}. Watch for these sections and offer encouragement when the student gets stuck.`
       : "Encourage your student to show their work and underline key clues before answering.",

@@ -25,12 +25,19 @@ accounts or sending learner data to a paid external API.
 - Deterministic blueprint fallback when Ollama is unavailable
 - Printable HTML workbook generation
 - Deterministic worksheet fallback when AI generation fails
-- Reading passage, vocabulary, question sections, fun zone, and answer key
+- Reading passage, vocabulary, question sections, age-aware activity challenge,
+  and answer key
+- History-aware fallback generation by grade band, including elementary source
+  clues, middle-school chronology/cause-effect, and advanced source
+  corroboration for high school, college, and Master's levels
+- Dynamic activity/challenge section that changes on each generation instead of
+  repeating the same puzzle set for identical inputs
 - AI question validation that drops incomplete model output before rendering
 - Open, print, and download HTML actions for generated worksheets
 - Docker Compose deployment with Caddy HTTPS reverse proxy
 - Oracle Cloud deployment guide
 - Lightweight WebP hero image for faster first page load
+- Documented performance evolution in `docs/PERFORMANCE_NOTES.md`
 
 ## Current Known Constraints
 
@@ -56,8 +63,8 @@ accounts or sending learner data to a paid external API.
   are kept.
 - Add basic analytics-free health logging: request duration, fallback used, model
   used, and generation stage.
-- Add more deterministic banks for math, science, writing, history, and logic by
-  grade band so fallback mode is stronger worldwide.
+- Expand deterministic banks beyond the new history-grade bands into deeper
+  math, science, writing, and logic variants for more countries and curricula.
 - Add multilingual worksheet support, starting with Spanish.
 
 ## Pre-Deploy Checklist
@@ -76,6 +83,8 @@ Also verify:
 - `docs/ROADMAP.md` still matches the product direction.
 - Local smoke test: homepage loads, expert plan appears, worksheet generates or
   falls back successfully.
+- Performance notes are updated when generation speed, model routing, prompt
+  shape, fallback behavior, or asset weight changes.
 - Server `.env` has the intended `LLM_BASE_URL`, model names, public site URL,
   and contact email.
 

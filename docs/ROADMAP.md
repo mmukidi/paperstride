@@ -52,6 +52,8 @@ No worksheet data ever leaves the server.
 - Math Reasoning, Grammar & Writing, Science Investigation, Logic & Patterns,
   Social Studies, Critical Thinking (all from static banks currently)
 - Fun Zone: pattern puzzles, word search, spot the difference, crack the code
+- Extension Challenge replaces Fun Zone for high-school/adult outputs, with
+  source-analysis and argument tasks when the interest is History
 - Answer sheet with explanations, watch-outs, and next-time tips
 - Print / Download / Open buttons
 
@@ -123,6 +125,8 @@ Performance levers, all baked into the request (no server config needed):
   into well under a minute.
 - **Batched sections** — one call pays the shared context prefill once instead of N times.
 - **Blueprint cache** — identical inputs return the preview instantly (1 h TTL).
+- **Grade-aware deterministic banks** — stronger fallback quality without extra
+  model calls, now including history-specific source and timeline work.
 
 Resilience preserved: if the batched call fails or omits a subject, that subject is
 retried individually, then falls back to the deterministic bank. The worksheet always
@@ -158,7 +162,7 @@ Live progress steps shown during generation so the ~50s wait feels active:
 | PDF export | Headless browser (Puppeteer) so download is a real PDF |
 | Worksheet summary header | "16 questions · Math + Reading focus · ~38 min" shown at top of worksheet |
 | Difficulty stars per question | ⭐ easy / ⭐⭐ medium / ⭐⭐⭐ stretch on every question card |
-| Cross-section coherence | Math/science problems reference the reading passage scenario |
+| Cross-section coherence | Math/science/history problems reference the reading passage scenario |
 | OLLAMA_NUM_PARALLEL=2 | Allows two worksheets to generate simultaneously |
 | Queue position feedback | "2 worksheets ahead — ~90 seconds" shown to waiting users |
 
@@ -213,6 +217,7 @@ See `docs/oracle-cloud-deployment.md` for full details.
 | Model reloads between calls | every swap | none (`keep_alive: -1`) |
 | Section AI coverage | ~20% (reading only) | 100% (all sections) |
 | Concurrent users | 1 cleanly | 2 (`OLLAMA_NUM_PARALLEL=2`, server-side) |
+| Fallback quality | Generic interest theme | Grade-aware, history-specific banks for source reasoning |
 
 ### Biggest remaining lever: the Oracle shape
 Inference speed scales with cores. **Confirm the A1.Flex instance is using the full
