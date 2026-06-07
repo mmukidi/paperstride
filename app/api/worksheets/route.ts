@@ -7,6 +7,11 @@ type WorksheetInput = {
   grade: string;
   age: number;
   interests: string;
+  // New fields — all optional with safe defaults so old calls still work
+  strugglingWith: string[];
+  subjectFocus: string;
+  goal: string;
+  timeAvailable: number;
 };
 
 type WorksheetSection = {
@@ -14,6 +19,8 @@ type WorksheetSection = {
   questionCount: number;
   skills: string[];
   focus: string;
+  isWeakArea?: boolean;
+  interestConnection?: string;
 };
 
 type LearningBlueprint = {
@@ -31,6 +38,10 @@ type LearningBlueprint = {
   answerExpectations: string;
   vocabularyPlan: string;
   testReadinessPlan: string;
+  // New fields
+  estimatedMinutes?: number;
+  themeThread?: string;
+  parentNote?: string;
 };
 
 // Canonical subjects the fallback can generate. The blueprint may request any of
@@ -68,27 +79,25 @@ const allowedGrades = new Set([
   "Master's"
 ]);
 
-// LLM backend is OpenAI-compatible and fully configurable. Defaults to Groq, but can
-// point at a self-hosted Ollama server (LLM_BASE_URL=http://host:11434/v1, no key).
-const LLM_BASE_URL = (process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-const LLM_MODEL = process.env.LLM_MODEL || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const LLM_API_KEY = process.env.LLM_API_KEY || process.env.GROQ_API_KEY || "";
-// Per-call timeout. Local CPU inference is slow, so allow minutes before giving up and
-// letting that one section fall back to the deterministic bank.
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 180000);
+// Ollama-only backend — no external API dependency, no rate limits.
+// All inference runs on the local Oracle Cloud server.
+const LLM_BASE_URL = (process.env.LLM_BASE_URL || "http://localhost:11434/v1").replace(/\/+$/, "");
+// Quality model: used for the blueprint and reading passage (needs reasoning depth).
+const QUALITY_MODEL = process.env.LLM_MODEL || "qwen2.5:7b-instruct";
+// Fast model: used for per-section calls (structured JSON, faster turnaround).
+const FAST_MODEL = process.env.LLM_FAST_MODEL || "llama3.2:3b";
+// Per-call timeout — each section call should complete well within 30s on local CPU.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 30000);
 const llmEndpoint = `${LLM_BASE_URL}/chat/completions`;
-// The AI path runs when any LLM backend is configured (a key, or a non-Groq base URL).
-const llmConfigured = Boolean(process.env.LLM_BASE_URL || process.env.GROQ_API_KEY);
-// Local CPU models are much more reliable when they personalize the reading core and
-// the deterministic engine renders the rest from the blueprint. Full AI section
-// generation can be enabled later for faster hosted models or background jobs.
-const LLM_GENERATE_ALL_SECTIONS = process.env.LLM_GENERATE_ALL_SECTIONS === "true";
+// Ollama is always the backend; llmConfigured is always true when the server is running.
+const llmConfigured = true;
 
 export async function POST(request: NextRequest) {
   let input: WorksheetInput;
+  let prebuiltBlueprint: LearningBlueprint | null;
 
   try {
-    input = await parseInput(request);
+    ({ input, prebuiltBlueprint } = await parseInput(request));
   } catch (error) {
     return jsonError(
       error instanceof Error ? error.message : "Please check the worksheet details.",
@@ -98,15 +107,10 @@ export async function POST(request: NextRequest) {
 
   try {
     let html: string;
-
-    if (llmConfigured) {
-      try {
-        html = await createHtmlWorksheetWithGroq(input);
-      } catch (error) {
-        console.warn("AI worksheet generation failed; using quality fallback", error);
-        html = createFallbackHtmlWorksheet(input, defaultBlueprint(input));
-      }
-    } else {
+    try {
+      html = await createHtmlWorksheetWithOllama(input, prebuiltBlueprint);
+    } catch (error) {
+      console.warn("AI worksheet generation failed; using quality fallback", error);
       html = createFallbackHtmlWorksheet(input, defaultBlueprint(input));
     }
 
@@ -126,7 +130,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function parseInput(request: NextRequest): Promise<WorksheetInput> {
+const VALID_STRUGGLES = new Set(["Reading","Fractions","Word Problems","Vocabulary","Grammar","Writing","Science","Logic"]);
+const VALID_FOCUSES   = new Set(["balanced","more-math","more-reading","math-only","reading-only"]);
+const VALID_GOALS     = new Set(["general","test-prep","catching-up","getting-ahead"]);
+const VALID_TIMES     = new Set([20, 40, 60]);
+
+async function parseInput(request: NextRequest): Promise<{ input: WorksheetInput; prebuiltBlueprint: LearningBlueprint | null }> {
   const body = await request.json().catch(() => null);
 
   if (!body || typeof body !== "object") {
@@ -134,31 +143,30 @@ async function parseInput(request: NextRequest): Promise<WorksheetInput> {
   }
 
   const childName = cleanText(String(body.childName || ""), 40);
-  const grade = cleanText(String(body.grade || ""), 24);
-  const interests = cleanText(String(body.interests || ""), 180);
-  const age = Number(body.age);
+  const grade     = cleanText(String(body.grade || ""), 24);
+  const interests = cleanText(String(body.interests || ""), 200);
+  const age       = Number(body.age);
 
-  if (!childName) {
-    throw new Error("Please add a nickname.");
-  }
+  if (!childName)               throw new Error("Please add a nickname.");
+  if (!allowedGrades.has(grade)) throw new Error("Please choose a grade or level from the list.");
+  if (!Number.isInteger(age) || age < 3 || age > 26) throw new Error("Please choose an age between 3 and 26.");
+  if (!interests)               throw new Error("Please add at least one interest.");
 
-  if (!allowedGrades.has(grade)) {
-    throw new Error("Please choose a grade or level from the list.");
-  }
+  const strugglingWith = Array.isArray(body.strugglingWith)
+    ? body.strugglingWith.map(String).filter((s: string) => VALID_STRUGGLES.has(s))
+    : [];
+  const subjectFocus = VALID_FOCUSES.has(body.subjectFocus) ? String(body.subjectFocus) : "balanced";
+  const goal         = VALID_GOALS.has(body.goal)           ? String(body.goal)         : "general";
+  const timeAvailable = VALID_TIMES.has(Number(body.timeAvailable)) ? Number(body.timeAvailable) : 40;
 
-  if (!Number.isInteger(age) || age < 3 || age > 26) {
-    throw new Error("Please choose an age between 3 and 26.");
-  }
-
-  if (!interests) {
-    throw new Error("Please add at least one interest.");
-  }
+  // If the frontend already computed the blueprint (after showing the plan preview),
+  // pass it through so we skip the blueprint LLM call entirely.
+  const prebuiltBlueprint: LearningBlueprint | null =
+    body.blueprint && typeof body.blueprint === "object" ? (body.blueprint as LearningBlueprint) : null;
 
   return {
-    childName,
-    grade,
-    age,
-    interests
+    input: { childName, grade, age, interests, strugglingWith, subjectFocus, goal, timeAvailable },
+    prebuiltBlueprint,
   };
 }
 
@@ -182,8 +190,12 @@ type WorksheetContent = {
 
 const PASSAGE_BUNDLE_SUBJECTS = new Set(["Reading Comprehension", "Vocabulary in Context"]);
 
-async function createHtmlWorksheetWithGroq(input: WorksheetInput): Promise<string> {
-  const blueprint = await createLearningBlueprint(input);
+async function createHtmlWorksheetWithOllama(
+  input: WorksheetInput,
+  prebuiltBlueprint: LearningBlueprint | null
+): Promise<string> {
+  // Skip blueprint LLM call if the frontend already computed it (plan preview flow).
+  const blueprint = prebuiltBlueprint ?? await createLearningBlueprint(input);
 
   try {
     const html = await createStagedWorksheetHtml(input, blueprint);
@@ -225,21 +237,19 @@ async function createStagedWorksheetHtml(
     content.passageHtml = undefined;
   }
 
-  // Local CPU generation is too slow and too error-prone for every subject. By default,
-  // Prompt 2 personalizes the reading/vocab core and the deterministic banks fill the
-  // remaining sections from Prompt 1's blueprint. Set LLM_GENERATE_ALL_SECTIONS=true
-  // only when the backend is fast and the quality gate is strong enough.
-  if (LLM_GENERATE_ALL_SECTIONS) {
-    for (const section of blueprint.sections) {
-      if (PASSAGE_BUNDLE_SUBJECTS.has(section.subject)) continue;
-      try {
-        const questions = await generateSectionQuestions(input, blueprint, section);
-        if (questions.length) {
-          content.sectionQuestions![section.subject] = questions;
-        }
-      } catch (error) {
-        console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
+  // Generate all sections sequentially using the fast model (llama3.2:3b).
+  // Sequential execution is correct for local CPU inference — parallel would
+  // split cores and make each call slower without reducing total time.
+  // Each section fails independently and falls back to the deterministic bank.
+  for (const section of blueprint.sections) {
+    if (PASSAGE_BUNDLE_SUBJECTS.has(section.subject)) continue;
+    try {
+      const questions = await generateSectionQuestions(input, blueprint, section);
+      if (questions.length) {
+        content.sectionQuestions![section.subject] = questions;
       }
+    } catch (error) {
+      console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
     }
   }
 
@@ -322,9 +332,10 @@ async function generateSectionQuestions(
   blueprint: LearningBlueprint,
   section: WorksheetSection
 ): Promise<GeneratedQuestion[]> {
-  const content = await groqChat({
-    temperature: 0.45,
-    maxTokens: 1100,
+  const content = await ollamaChat({
+    model: FAST_MODEL,   // llama3.2:3b — faster for focused structured calls
+    temperature: 0.35,
+    maxTokens: 600,
     responseFormat: "json_object",
     messages: [
       {
@@ -336,30 +347,22 @@ async function generateSectionQuestions(
         role: "user",
         content: `Write practice questions for ONE worksheet section.
 
-Learner:
-- Grade or level: ${input.grade}
-- Age: ${input.age}
-- Interest themes: ${input.interests}
+Learner: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
+${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold questions in this section appropriately.` : ""}
 
 Section: ${section.subject}
-Skills to test: ${section.skills.join(", ") || "core skills for this subject"}
+Skills: ${section.skills.join(", ") || "core skills for this subject"}
 Focus: ${section.focus}
+${section.isWeakArea ? "⚑ This is a WEAK AREA. Start with one confidence-builder question, then build up. Add a scaffolding hint to harder questions." : ""}
+${section.interestConnection ? `Interest connection: ${section.interestConnection}` : ""}
+Theme thread: ${blueprint.themeThread ?? input.interests}
 
-Blueprint contract:
-- Curriculum path: ${blueprint.curriculumPath}
-- Grade expectations: ${blueprint.gradeExpectations}
-- Motivation strategy: ${blueprint.motivationStrategy}
-- Challenge level: ${blueprint.challengeLevel}
-- Question formats to honor where appropriate: ${blueprint.questionFormats.join(", ")}
-- Answer expectations: ${blueprint.answerExpectations}
-- Test-readiness plan: ${blueprint.testReadinessPlan}
-
-Requirements:
-- Write EXACTLY ${section.questionCount} questions at this exact grade level, themed to the interests where natural and useful.
-- Use the section focus and listed skills as the authority. Do not introduce unrelated chart, data, or test-prep content unless the blueprint or section skills call for it.
-- Make the learner feel capable: include quick wins, curiosity, and concrete scenarios tied to the interests.
-- For ${section.subject}, prefer multiple choice when it fits: give 3-4 options with exactly one correct option that appears in "choices". For open-ended or writing prompts, use an empty "choices" array.
-- Every question needs a clear correct answer (or a model answer for open prompts) and a short explanation of why it is right.
+Write EXACTLY ${section.questionCount} questions.
+- Q1 should be accessible (confidence-builder). Final Q should be the most challenging.
+- Use the interest connection to make scenarios specific and motivating.
+- Prefer multiple choice (3-4 options, exactly one correct answer in "choices").
+- Open response for writing/explanation prompts — use empty "choices" array.
+- Every question needs a correct answer and a short explanation.
 
 Return JSON exactly:
 { "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ] }`
@@ -543,70 +546,54 @@ Pedagogical principles to honor:
   return normalizeBlueprint(parseJsonContent(content), input);
 }
 
-async function groqChat(options: {
+// ollamaChat — single call to the local Ollama server.
+// model: QUALITY_MODEL for blueprint/passage, FAST_MODEL for section calls.
+async function ollamaChat(options: {
   messages: Array<{ role: "system" | "user"; content: string }>;
   maxTokens: number;
   temperature: number;
   responseFormat?: "json_object";
+  model?: string;
 }): Promise<string> {
-  let lastError = "";
+  const model = options.model ?? QUALITY_MODEL;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-
-    let response: Response;
-    try {
-      response = await fetch(llmEndpoint, {
-        method: "POST",
-        headers: {
-          ...(LLM_API_KEY ? { Authorization: `Bearer ${LLM_API_KEY}` } : {}),
-          "Content-Type": "application/json"
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: LLM_MODEL,
-          temperature: options.temperature,
-          max_tokens: options.maxTokens,
-          ...(options.responseFormat
-            ? {
-                response_format: {
-                  type: options.responseFormat
-                }
-              }
-            : {}),
-          messages: options.messages
-        })
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (response.status === 429 && attempt === 0) {
-      lastError = await response.text().catch(() => "");
-      const waitMs = retryDelayMs(lastError);
-      console.warn(`LLM rate limited worksheet generation; retrying in ${waitMs}ms`);
-      await sleep(waitMs);
-      continue;
-    }
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`LLM returned ${response.status}: ${body.slice(0, 240)}`);
-    }
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
-
-    if (typeof content !== "string" || !content.trim()) {
-      throw new Error("LLM response did not include worksheet content.");
-    }
-
-    return content;
+  let response: Response;
+  try {
+    response = await fetch(llmEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        temperature: options.temperature,
+        max_tokens: options.maxTokens,
+        ...(options.responseFormat ? { response_format: { type: options.responseFormat } } : {}),
+        messages: options.messages
+      })
+    });
+  } finally {
+    clearTimeout(timer);
   }
 
-  throw new Error(`LLM rate limit did not clear: ${lastError.slice(0, 240)}`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Ollama returned ${response.status}: ${body.slice(0, 240)}`);
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("Ollama response did not include worksheet content.");
+  }
+
+  return content;
 }
+
+// Keep groqChat as an alias so existing call sites don't need updating yet.
+const groqChat = ollamaChat;
 
 function createFallbackHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint): string {
   return injectNickname(createSampleHtmlWorksheet(input, blueprint), input.childName);
