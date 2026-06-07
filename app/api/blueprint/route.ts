@@ -3,11 +3,23 @@ import { NextRequest } from "next/server";
 export const runtime = "nodejs";
 
 // ─── LLM config (Ollama-only — no external API dependency) ───────────────────
+// Native /api/chat so keep_alive/num_ctx/num_thread can be set per request.
 const LLM_BASE_URL = (process.env.LLM_BASE_URL || "http://localhost:11434/v1").replace(/\/+$/, "");
-const QUALITY_MODEL = process.env.LLM_MODEL || "qwen2.5:7b-instruct";
-// Blueprint call needs much longer — qwen2.5:7b on CPU takes 2–4 min for a complex plan.
-const LLM_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 360000); // 6 min
-const llmEndpoint = `${LLM_BASE_URL}/chat/completions`;
+const OLLAMA_HOST = LLM_BASE_URL.replace(/\/v1$/, "");
+const ollamaEndpoint = `${OLLAMA_HOST}/api/chat`;
+// The blueprint is internal planning that we normalize/validate anyway, so it runs on the
+// FAST model — this turns the preview from a ~3 min wait into well under a minute.
+const BLUEPRINT_MODEL = process.env.LLM_BLUEPRINT_MODEL || process.env.LLM_FAST_MODEL || "llama3.2:3b";
+const OLLAMA_NUM_THREAD = Number(process.env.OLLAMA_NUM_THREAD || 4);
+const OLLAMA_KEEP_ALIVE: number | string = process.env.OLLAMA_KEEP_ALIVE || -1;
+const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
+const LLM_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 180000);
+
+// Small in-memory cache: blueprints are near-deterministic for a given input signature,
+// so repeat previews (same grade/age/interests/focus/goal/struggles) return instantly.
+const BLUEPRINT_CACHE = new Map<string, { value: BlueprintPreview; expires: number }>();
+const BLUEPRINT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const BLUEPRINT_CACHE_MAX = 200;
 
 const allowedGrades = new Set([
   "Pre-K","Kindergarten","Grade 1","Grade 2","Grade 3","Grade 4","Grade 5",
@@ -88,10 +100,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Serve a cached blueprint for identical inputs (instant preview on repeats).
+  const cacheKey = blueprintCacheKey(input);
+  const cached = BLUEPRINT_CACHE.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    return Response.json(cached.value, { headers: { "Cache-Control": "no-store", "X-Blueprint-Cache": "hit" } });
+  }
+
   try {
     const blueprint = await buildBlueprint(input);
+    if (BLUEPRINT_CACHE.size >= BLUEPRINT_CACHE_MAX) {
+      const oldest = BLUEPRINT_CACHE.keys().next().value;
+      if (oldest) BLUEPRINT_CACHE.delete(oldest);
+    }
+    BLUEPRINT_CACHE.set(cacheKey, { value: blueprint, expires: Date.now() + BLUEPRINT_CACHE_TTL_MS });
     return Response.json(blueprint, {
-      headers: { "Cache-Control": "no-store" }
+      headers: { "Cache-Control": "no-store", "X-Blueprint-Cache": "miss" }
     });
   } catch (err) {
     console.error("Blueprint generation failed", err);
@@ -100,6 +124,18 @@ export async function POST(request: NextRequest) {
       { status: 503 }
     );
   }
+}
+
+// Cache key from the inputs that actually shape the plan (the nickname doesn't).
+function blueprintCacheKey(input: ParsedInput): string {
+  return [
+    input.grade,
+    input.age,
+    input.interests.toLowerCase().trim(),
+    input.subjectFocus,
+    input.goal,
+    [...input.strugglingWith].sort().join("+")
+  ].join("|");
 }
 
 // ─── Input parsing ────────────────────────────────────────────────────────────
@@ -159,7 +195,7 @@ async function buildBlueprint(input: ParsedInput): Promise<BlueprintPreview> {
     : "No specific weak areas reported.";
 
   const content = await llmChat({
-    model: QUALITY_MODEL,
+    model: BLUEPRINT_MODEL,
     temperature: 0.2,
     maxTokens: 1600,
     responseFormat: "json_object",
@@ -444,16 +480,22 @@ async function llmChat(options: {
   const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(llmEndpoint, {
+    response = await fetch(ollamaEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
         model: options.model,
-        temperature: options.temperature,
-        max_tokens: options.maxTokens,
-        ...(options.responseFormat ? { response_format: { type: options.responseFormat } } : {}),
         messages: options.messages,
+        stream: false,
+        keep_alive: OLLAMA_KEEP_ALIVE,
+        ...(options.responseFormat === "json_object" ? { format: "json" } : {}),
+        options: {
+          temperature: options.temperature,
+          num_predict: options.maxTokens,
+          num_ctx: OLLAMA_NUM_CTX,
+          num_thread: OLLAMA_NUM_THREAD,
+        },
       }),
     });
   } finally {
@@ -464,7 +506,7 @@ async function llmChat(options: {
     throw new Error(`LLM returned ${response.status}: ${body.slice(0, 240)}`);
   }
   const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
+  const content = data?.message?.content;
   if (typeof content !== "string" || !content.trim()) throw new Error("LLM returned empty content.");
   return content;
 }

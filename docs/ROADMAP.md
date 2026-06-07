@@ -93,23 +93,37 @@ panel recommends:
 - Auto-generated parent note
 - "Adjust" or "Generate Worksheet" choice
 
-### 4. Per-Section AI Generation Pipeline (Phase 1 — backend)
-All worksheet sections become AI-generated (not just reading/vocab):
+### 4. AI Generation Pipeline (Phase 1 — backend) — performance-tuned
+
+The pipeline is now **3 LLM calls** (down from up to 7), and the blueprint runs on
+the fast model:
 
 ```
-Blueprint call  →  qwen2.5:7b-instruct  (~15s)
-Passage bundle  →  qwen2.5:7b-instruct  (~18s)
-Math section    →  llama3.2:3b          (~5s)
-Grammar section →  llama3.2:3b          (~5s)
-Science section →  llama3.2:3b          (~5s)
-Logic section   →  llama3.2:3b          (~4s)
-─────────────────────────────────────────────
-Total                                   ~52s
+Step 1 (preview)   Blueprint        →  llama3.2:3b   (internal plan, cached per input)
+Step 2 (generate)  Passage bundle   →  qwen2.5:7b    (passage + vocab + data table)
+Step 2 (generate)  All sections     →  llama3.2:3b   (ONE batched call, all subjects)
 ```
 
-Sequential execution (CPU cannot parallelise local inference).
-Per-section fallback: if one section fails, only that section uses the
-static bank — the rest remains AI-generated.
+When the frontend reuses the preview's blueprint, the generate step is just **2 calls**
+(passage + batched sections).
+
+Performance levers, all baked into the request (no server config needed):
+- **Native `/api/chat`** instead of OpenAI-compat, so we can set:
+- **`keep_alive: -1`** — models stay resident; swapping 7B↔3B never reloads from disk.
+- **`num_thread: 4`** — pin to all physical cores (one request uses the whole CPU).
+- **`num_ctx: 4096`** — capped context = smaller KV cache, faster prefill.
+- **Blueprint on 3B** — internal planning is validated anyway; turns a ~3 min preview
+  into well under a minute.
+- **Batched sections** — one call pays the shared context prefill once instead of N times.
+- **Blueprint cache** — identical inputs return the preview instantly (1 h TTL).
+
+Resilience preserved: if the batched call fails or omits a subject, that subject is
+retried individually, then falls back to the deterministic bank. The worksheet always
+completes.
+
+Single-model experiment: set `LLM_PASSAGE_MODEL=llama3.2:3b` to run the *entire*
+pipeline on the fast model — no 7B, no swaps, lowest latency — trading some passage
+prose quality. Flip back by unsetting the var.
 
 ### 5. Streaming Progress Feedback (Phase 1 — frontend)
 Live progress steps shown during generation so the ~50s wait feels active:
@@ -180,13 +194,28 @@ See `docs/oracle-cloud-deployment.md` for full details.
 
 ## Performance Targets
 
-| Metric | Current | Phase 1 Target |
+| Metric | Before | After tuning |
 |---|---|---|
-| Single user worksheet time | ~45s | ~52s (more sections, same server) |
-| Concurrent users | 1 cleanly | 2 (OLLAMA_NUM_PARALLEL=2) |
+| Blueprint / preview time | ~170s (7B) | ~30–45s (3B), instant on cache hit |
+| LLM calls per worksheet | up to 7 | 3 (2 when blueprint is prebuilt) |
+| Model reloads between calls | every swap | none (`keep_alive: -1`) |
 | Section AI coverage | ~20% (reading only) | 100% (all sections) |
-| Blueprint token budget | ~1300 out | ~1600 out |
-| Per-section call budget | N/A | ~450 in / ~500 out |
+| Concurrent users | 1 cleanly | 2 (`OLLAMA_NUM_PARALLEL=2`, server-side) |
+
+### Biggest remaining lever: the Oracle shape
+Inference speed scales with cores. **Confirm the A1.Flex instance is using the full
+free allowance — 4 OCPU / 24 GB** (the deployment doc once listed 1 OCPU / 6 GB). Going
+1→4 OCPU is roughly a 3–4× speedup and costs nothing on the Always Free tier. This is
+the single highest-impact change and is independent of the code.
+
+### Recommended server env (optional, for concurrency)
+The per-request knobs (`keep_alive`, `num_thread`, `num_ctx`) are set in code. The only
+genuinely server-side setting is concurrency:
+
+```
+OLLAMA_NUM_PARALLEL=1   # lowest latency for a single user (whole CPU per request)
+# set =2 only once the shape is 4 OCPU and you want two users at once
+```
 
 ---
 

@@ -81,16 +81,33 @@ const allowedGrades = new Set([
 
 // Ollama-only backend — no external API dependency, no rate limits.
 // All inference runs on the local Oracle Cloud server.
+// We use Ollama's NATIVE /api/chat (not the OpenAI-compat /v1) so we can pin keep_alive,
+// num_ctx, and num_thread per request — the levers that matter most for CPU latency.
 const LLM_BASE_URL = (process.env.LLM_BASE_URL || "http://localhost:11434/v1").replace(/\/+$/, "");
-// Quality model: used for the blueprint and reading passage (needs reasoning depth).
+const OLLAMA_HOST = LLM_BASE_URL.replace(/\/v1$/, ""); // -> http://localhost:11434
+const ollamaEndpoint = `${OLLAMA_HOST}/api/chat`;
+
+// Quality model: reading passage (needs reasoning/prose depth).
 const QUALITY_MODEL = process.env.LLM_MODEL || "qwen2.5:7b-instruct";
-// Fast model: used for per-section calls (structured JSON, faster turnaround).
+// Fast model: blueprint + all question sections (structured JSON, ~3x faster on CPU).
 const FAST_MODEL = process.env.LLM_FAST_MODEL || "llama3.2:3b";
-// Blueprint call: qwen2.5:7b on CPU takes 2–4 min. Section calls with llama3.2:3b are faster.
-// Use separate env vars so they can be tuned independently.
-const LLM_BLUEPRINT_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 360000); // 6 min
-const LLM_TIMEOUT_MS            = Number(process.env.LLM_TIMEOUT_MS            ||  90000); // 90s for sections
-const llmEndpoint = `${LLM_BASE_URL}/chat/completions`;
+// Passage model defaults to the quality model. Set LLM_PASSAGE_MODEL=llama3.2:3b to run
+// the ENTIRE pipeline on the fast model (the "single-model" speed experiment — no 7B,
+// no model swaps, lowest possible latency; trade some passage prose quality).
+const PASSAGE_MODEL = process.env.LLM_PASSAGE_MODEL || QUALITY_MODEL;
+
+// Performance knobs (baked into every request so they apply without server config):
+//  - keep_alive: -1 keeps models resident in RAM so swapping 7B<->3B never reloads from disk.
+//  - num_thread: pin to physical cores (Oracle A1 = 4) — all cores on one request.
+const OLLAMA_NUM_THREAD = Number(process.env.OLLAMA_NUM_THREAD || 4);
+const OLLAMA_KEEP_ALIVE: number | string = process.env.OLLAMA_KEEP_ALIVE || -1;
+const DEFAULT_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
+
+// Timeouts. Blueprint now runs on the fast model so it no longer needs minutes, but we
+// keep a generous ceiling for the very first (cold) call after a deploy.
+const LLM_BLUEPRINT_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 180000);
+const LLM_TIMEOUT_MS           = Number(process.env.LLM_TIMEOUT_MS           ||  90000);
+const LLM_PASSAGE_TIMEOUT_MS    = Number(process.env.LLM_PASSAGE_TIMEOUT_MS   || 300000); // 7B passage
 // Ollama is always the backend; llmConfigured is always true when the server is running.
 const llmConfigured = true;
 
@@ -251,19 +268,34 @@ async function createStagedWorksheetHtml(
     content.passageHtml = undefined;
   }
 
-  // Generate all sections sequentially using the fast model (llama3.2:3b).
-  // Sequential execution is correct for local CPU inference — parallel would
-  // split cores and make each call slower without reducing total time.
-  // Each section fails independently and falls back to the deterministic bank.
-  for (const section of blueprint.sections) {
-    if (PASSAGE_BUNDLE_SUBJECTS.has(section.subject)) continue;
+  // Generate every non-reading section in ONE batched call on the fast model. Batching
+  // pays the shared context prefill once instead of N times (the redundant-prefill win),
+  // and avoids per-call scheduling overhead. Per-section resilience is preserved below:
+  // any subject the batch doesn't fill is retried individually, then bank-filled.
+  const sectionsToGenerate = blueprint.sections.filter(
+    (section) => !PASSAGE_BUNDLE_SUBJECTS.has(section.subject)
+  );
+
+  if (sectionsToGenerate.length) {
     try {
-      const questions = await generateSectionQuestions(input, blueprint, section);
-      if (questions.length) {
-        content.sectionQuestions![section.subject] = questions;
+      const batched = await generateAllSections(input, blueprint, sectionsToGenerate);
+      for (const section of sectionsToGenerate) {
+        const questions = batched[section.subject];
+        if (questions?.length) content.sectionQuestions![section.subject] = questions;
       }
     } catch (error) {
-      console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
+      console.warn("Batched section generation failed; retrying per-section", error);
+    }
+
+    // Fill any section the batch missed, one at a time, before the deterministic bank.
+    for (const section of sectionsToGenerate) {
+      if (content.sectionQuestions![section.subject]?.length) continue;
+      try {
+        const questions = await generateSectionQuestions(input, blueprint, section);
+        if (questions.length) content.sectionQuestions![section.subject] = questions;
+      } catch (error) {
+        console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
+      }
     }
   }
 
@@ -285,9 +317,10 @@ async function generatePassageBundle(
   const wantsData = blueprintWantsData(blueprint, blueprint.sections) && input.age >= 9;
 
   const content = await groqChat({
+    model: PASSAGE_MODEL,                 // 7B by default for prose quality
     temperature: 0.5,
     maxTokens: 1700,
-    timeoutMs: LLM_BLUEPRINT_TIMEOUT_MS,
+    timeoutMs: LLM_PASSAGE_TIMEOUT_MS,
     responseFormat: "json_object",
     messages: [
       {
@@ -386,6 +419,75 @@ function normalizeDataTable(value: unknown): TopicDataTable | undefined {
   });
 
   return { title, intro, columns, rows: fixedRows, question };
+}
+
+// Generate questions for ALL non-reading sections in a single call. Returns a map of
+// subject -> questions; subjects the model omits or botches simply don't appear, so the
+// caller can retry them individually or bank-fill.
+async function generateAllSections(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint,
+  sections: WorksheetSection[]
+): Promise<Record<string, GeneratedQuestion[]>> {
+  const totalQuestions = sections.reduce((sum, s) => sum + s.questionCount, 0);
+  const hasMathOrLogic = sections.some((s) => /math|logic|pattern/i.test(s.subject));
+
+  const sectionSpecs = sections
+    .map((s, i) => {
+      const weak = s.isWeakArea
+        ? " — WEAK AREA: start with a confidence-builder and add a scaffolding hint to harder ones"
+        : "";
+      const conn = s.interestConnection ? ` Interest connection: ${s.interestConnection}.` : "";
+      return `${i + 1}. "${s.subject}" — write EXACTLY ${s.questionCount} question(s). Skills: ${s.skills.join(", ") || "core skills"}. Focus: ${s.focus}.${weak}${conn}`;
+    })
+    .join("\n");
+
+  const shape = sections
+    .map((s) => `  "${s.subject}": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]`)
+    .join(",\n");
+
+  const content = await ollamaChat({
+    model: FAST_MODEL,
+    temperature: hasMathOrLogic ? 0.2 : 0.35,
+    maxTokens: Math.min(2400, 250 + totalQuestions * 130),
+    timeoutMs: LLM_TIMEOUT_MS,
+    responseFormat: "json_object",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You write rigorous, grade-appropriate practice questions across several worksheet sections at once, each with a correct answer and a short explanation. For any question involving numbers, solve it step by step and make sure the explanation's steps reach EXACTLY the stated correctAnswer — never contradict yourself. The correct option must be unambiguously correct and must appear in \"choices\". Return only valid JSON. Never include the learner's name or any private data."
+      },
+      {
+        role: "user",
+        content: `Learner: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
+${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold those areas appropriately.` : ""}
+Theme thread: ${blueprint.themeThread ?? input.interests}
+
+Write questions for EACH section below. Weave the interests into scenarios so they feel
+specific and motivating. Within each section, make the first question accessible and the
+last the most challenging. Prefer multiple choice (3-4 options, exactly one correct answer
+that appears in "choices"); use an empty "choices" array for writing/explanation prompts.
+For numeric questions, double-check the arithmetic so the explanation matches the answer.
+
+SECTIONS:
+${sectionSpecs}
+
+Return JSON exactly, with one key per section title:
+{
+${shape}
+}`
+      }
+    ]
+  });
+
+  const parsed = parseJsonContent(content) as Record<string, unknown>;
+  const out: Record<string, GeneratedQuestion[]> = {};
+  for (const section of sections) {
+    const questions = normalizeGeneratedQuestions(parsed[section.subject], section.questionCount);
+    if (questions.length) out[section.subject] = questions;
+  }
+  return out;
 }
 
 async function generateSectionQuestions(
@@ -623,8 +725,9 @@ Pedagogical principles to honor:
   return normalizeBlueprint(parseJsonContent(content), input);
 }
 
-// ollamaChat — single call to the local Ollama server.
-// model: QUALITY_MODEL for blueprint/passage, FAST_MODEL for section calls.
+// ollamaChat — single call to the local Ollama server via the native /api/chat API.
+// keep_alive/num_thread/num_ctx are set on every request so the performance tuning
+// travels with the code and needs no server-side configuration.
 async function ollamaChat(options: {
   messages: Array<{ role: "system" | "user"; content: string }>;
   maxTokens: number;
@@ -632,24 +735,31 @@ async function ollamaChat(options: {
   responseFormat?: "json_object";
   model?: string;
   timeoutMs?: number;  // override per call-type
+  numCtx?: number;     // override context window per call-type
 }): Promise<string> {
-  const model = options.model ?? QUALITY_MODEL;
+  const model = options.model ?? FAST_MODEL;
   const timeout = options.timeoutMs ?? LLM_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
   let response: Response;
   try {
-    response = await fetch(llmEndpoint, {
+    response = await fetch(ollamaEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        temperature: options.temperature,
-        max_tokens: options.maxTokens,
-        ...(options.responseFormat ? { response_format: { type: options.responseFormat } } : {}),
-        messages: options.messages
+        messages: options.messages,
+        stream: false,
+        keep_alive: OLLAMA_KEEP_ALIVE,
+        ...(options.responseFormat === "json_object" ? { format: "json" } : {}),
+        options: {
+          temperature: options.temperature,
+          num_predict: options.maxTokens,
+          num_ctx: options.numCtx ?? DEFAULT_NUM_CTX,
+          num_thread: OLLAMA_NUM_THREAD
+        }
       })
     });
   } finally {
@@ -662,7 +772,7 @@ async function ollamaChat(options: {
   }
 
   const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
+  const content = data?.message?.content;
 
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("Ollama response did not include worksheet content.");
