@@ -5,7 +5,8 @@ export const runtime = "nodejs";
 // ─── LLM config (Ollama-only — no external API dependency) ───────────────────
 const LLM_BASE_URL = (process.env.LLM_BASE_URL || "http://localhost:11434/v1").replace(/\/+$/, "");
 const QUALITY_MODEL = process.env.LLM_MODEL || "qwen2.5:7b-instruct";
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 30000);
+// Blueprint call needs much longer — qwen2.5:7b on CPU takes 2–4 min for a complex plan.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 360000); // 6 min
 const llmEndpoint = `${LLM_BASE_URL}/chat/completions`;
 
 const allowedGrades = new Set([

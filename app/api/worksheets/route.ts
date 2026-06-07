@@ -86,8 +86,10 @@ const LLM_BASE_URL = (process.env.LLM_BASE_URL || "http://localhost:11434/v1").r
 const QUALITY_MODEL = process.env.LLM_MODEL || "qwen2.5:7b-instruct";
 // Fast model: used for per-section calls (structured JSON, faster turnaround).
 const FAST_MODEL = process.env.LLM_FAST_MODEL || "llama3.2:3b";
-// Per-call timeout — each section call should complete well within 30s on local CPU.
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 30000);
+// Blueprint call: qwen2.5:7b on CPU takes 2–4 min. Section calls with llama3.2:3b are faster.
+// Use separate env vars so they can be tuned independently.
+const LLM_BLUEPRINT_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 360000); // 6 min
+const LLM_TIMEOUT_MS            = Number(process.env.LLM_TIMEOUT_MS            ||  90000); // 90s for sections
 const llmEndpoint = `${LLM_BASE_URL}/chat/completions`;
 // Ollama is always the backend; llmConfigured is always true when the server is running.
 const llmConfigured = true;
@@ -270,6 +272,7 @@ async function generatePassageBundle(
   const content = await groqChat({
     temperature: 0.5,
     maxTokens: 1700,
+    timeoutMs: LLM_BLUEPRINT_TIMEOUT_MS,
     responseFormat: "json_object",
     messages: [
       {
@@ -481,6 +484,7 @@ async function createLearningBlueprint(input: WorksheetInput): Promise<LearningB
   const content = await groqChat({
     temperature: 0.35,
     maxTokens: 1300,
+    timeoutMs: LLM_BLUEPRINT_TIMEOUT_MS,
     responseFormat: "json_object",
     messages: [
       {
@@ -554,10 +558,12 @@ async function ollamaChat(options: {
   temperature: number;
   responseFormat?: "json_object";
   model?: string;
+  timeoutMs?: number;  // override per call-type
 }): Promise<string> {
   const model = options.model ?? QUALITY_MODEL;
+  const timeout = options.timeoutMs ?? LLM_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeout);
 
   let response: Response;
   try {
@@ -633,12 +639,15 @@ function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlue
     visualPlan: normalizeStringList(candidate.visualPlan, fallback.visualPlan, 10),
     questionFormats: normalizeStringList(candidate.questionFormats, fallback.questionFormats, 10),
     answerExpectations: cleanText(
-      String(candidate.answerExpectations || fallback.answerExpectations),
+      safeString(candidate.answerExpectations) || fallback.answerExpectations,
       360
     ),
-    vocabularyPlan: cleanText(String(candidate.vocabularyPlan || fallback.vocabularyPlan), 360),
+    vocabularyPlan: cleanText(
+      safeString(candidate.vocabularyPlan) || fallback.vocabularyPlan,
+      360
+    ),
     testReadinessPlan: cleanText(
-      String(candidate.testReadinessPlan || fallback.testReadinessPlan),
+      safeString(candidate.testReadinessPlan) || fallback.testReadinessPlan,
       360
     )
   };
@@ -1541,6 +1550,13 @@ function parseJsonContent(content: string): unknown {
 
     throw new Error("Worksheet blueprint was not valid JSON.");
   }
+}
+
+// Return the value as a string only if it is actually a non-empty string.
+// Returns "" for objects, arrays, null, undefined — callers fall back to the default.
+function safeString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  return "";
 }
 
 function normalizeStringList(value: unknown, fallback: string[], maxItems: number): string[] {
