@@ -181,6 +181,16 @@ type GeneratedQuestion = {
   explanation: string;
 };
 
+// A real, topic-specific data table the learner interprets (replaces the old hardcoded
+// "study plan" table). AI-authored and tied to the passage topic; omitted if not produced.
+type TopicDataTable = {
+  title: string;
+  intro: string;
+  columns: string[];
+  rows: string[][];
+  question: string;
+};
+
 // Optional AI-authored pieces injected into the deterministic assembler. Anything
 // absent is filled from the deterministic banks, so the worksheet is always complete.
 type WorksheetContent = {
@@ -188,6 +198,7 @@ type WorksheetContent = {
   vocab?: string[][];
   readingQuestions?: GeneratedQuestion[];
   sectionQuestions?: Record<string, GeneratedQuestion[]>;
+  dataTable?: TopicDataTable;
 };
 
 const PASSAGE_BUNDLE_SUBJECTS = new Set(["Reading Comprehension", "Vocabulary in Context"]);
@@ -228,6 +239,7 @@ async function createStagedWorksheetHtml(
       content.passageHtml = bundle.passageHtml;
       content.vocab = bundle.vocab.length ? bundle.vocab : undefined;
       content.readingQuestions = bundle.readingQuestions.length ? bundle.readingQuestions : undefined;
+      content.dataTable = bundle.dataTable;
     } catch (error) {
       console.warn("Passage bundle failed; using bank passage and vocabulary", error);
     }
@@ -261,13 +273,16 @@ async function createStagedWorksheetHtml(
 async function generatePassageBundle(
   input: WorksheetInput,
   blueprint: LearningBlueprint
-): Promise<{ passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[] }> {
+): Promise<{ passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[]; dataTable?: TopicDataTable }> {
   const profile = qualityProfileFor(input);
   const readingCount = blueprint.sections.find((s) => s.subject === "Reading Comprehension")?.questionCount ?? 4;
   const vocabCount = Math.max(
     profile.minVocabularyCards,
     blueprint.sections.find((s) => s.subject === "Vocabulary in Context")?.questionCount ?? profile.minVocabularyCards
   );
+  // Only ask for a data table when the plan calls for data/chart practice, so we don't
+  // spend tokens on it for early learners or reading-only plans.
+  const wantsData = blueprintWantsData(blueprint, blueprint.sections) && input.age >= 9;
 
   const content = await groqChat({
     temperature: 0.5,
@@ -302,13 +317,23 @@ Requirements:
 - Keep tone age-appropriate: playful and concrete for elementary learners, more strategic for older learners.
 - Write ${readingCount} comprehension questions about the passage (main idea, evidence, vocabulary in context, inference as age allows). Where a multiple-choice question fits, give 3-4 options with exactly one correct option that appears in "choices"; otherwise use an empty "choices" array for a written response.
 - Pull ${vocabCount} useful words FROM the passage with a simple definition, an example sentence, and a memory hint.
-- Do not label the passage "Original passage:".
+- Do not label the passage "Original passage:".${
+          wantsData
+            ? `
+- Also include a small, REAL data table about the passage topic (for example planet facts, rocket speeds, animal sizes, match or team statistics, historical dates) with 3-4 rows and 3 columns. Use realistic numbers a curious learner could look up. Add one interpretation question that requires comparing rows. Do NOT make a table about studying, practice plans, or worksheet habits.`
+            : ""
+        }
 
 Return JSON exactly:
 {
   "passageParagraphs": ["paragraph 1", "paragraph 2"],
   "vocab": [ { "word": "", "definition": "", "example": "", "hint": "" } ],
-  "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]
+  "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]${
+    wantsData
+      ? `,
+  "dataTable": { "title": "", "intro": "one sentence on what to notice", "columns": ["", "", ""], "rows": [["", "", ""]], "question": "one comparison question about the table" }`
+      : ""
+  }
 }`
       }
     ]
@@ -326,8 +351,41 @@ Return JSON exactly:
   const passageHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("\n    ");
   const vocab = normalizeGeneratedVocab(parsed.vocab);
   const readingQuestions = normalizeGeneratedQuestions(parsed.questions, readingCount);
+  const dataTable = wantsData ? normalizeDataTable(parsed.dataTable) : undefined;
 
-  return { passageHtml, vocab, readingQuestions };
+  return { passageHtml, vocab, readingQuestions, dataTable };
+}
+
+// Validate the AI data table. Returns undefined if it is missing, malformed, or looks
+// like the old "study plan / practice habits" content, so we omit rather than show junk.
+function normalizeDataTable(value: unknown): TopicDataTable | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Record<string, unknown>;
+  const title = safeString(v.title);
+  const intro = safeString(v.intro);
+  const question = safeString(v.question);
+  const columns = Array.isArray(v.columns) ? v.columns.map(safeString).filter(Boolean) : [];
+  const rows = Array.isArray(v.rows)
+    ? v.rows
+        .filter((r): r is unknown[] => Array.isArray(r))
+        .map((r) => r.map(safeString))
+        .filter((r) => r.some(Boolean))
+    : [];
+
+  if (!title || columns.length < 2 || rows.length < 2) return undefined;
+  // Reject the off-vision "study habits" style table entirely.
+  if (/practice plan|study plan|worksheet|accuracy|minutes studied/i.test(`${title} ${intro} ${columns.join(" ")}`)) {
+    return undefined;
+  }
+  // Pad/trim each row to the column count so the table always renders cleanly.
+  const width = columns.length;
+  const fixedRows = rows.map((r) => {
+    const row = r.slice(0, width);
+    while (row.length < width) row.push("");
+    return row;
+  });
+
+  return { title, intro, columns, rows: fixedRows, question };
 }
 
 async function generateSectionQuestions(
@@ -335,16 +393,17 @@ async function generateSectionQuestions(
   blueprint: LearningBlueprint,
   section: WorksheetSection
 ): Promise<GeneratedQuestion[]> {
+  const isMath = section.subject === "Math Reasoning" || /math|logic|pattern/i.test(section.subject);
   const content = await ollamaChat({
     model: FAST_MODEL,   // llama3.2:3b — faster for focused structured calls
-    temperature: 0.35,
+    temperature: isMath ? 0.15 : 0.35,  // lower temp for math/logic → fewer arithmetic slips
     maxTokens: 600,
     responseFormat: "json_object",
     messages: [
       {
         role: "system",
         content:
-          "You write rigorous, grade-appropriate practice questions for one subject, with a correct answer and explanation for each. Return only valid JSON. Never include the learner's name or any private data."
+          "You write rigorous, grade-appropriate practice questions for one subject, with a correct answer and explanation for each. For any question involving numbers, solve it yourself step by step and make sure the explanation's steps lead to EXACTLY the stated correctAnswer — never contradict yourself. The correct option must be unambiguously correct and must appear in \"choices\". Return only valid JSON. Never include the learner's name or any private data."
       },
       {
         role: "user",
@@ -366,6 +425,9 @@ Write EXACTLY ${section.questionCount} questions.
 - Prefer multiple choice (3-4 options, exactly one correct answer in "choices").
 - Open response for writing/explanation prompts — use empty "choices" array.
 - Every question needs a correct answer and a short explanation.
+- For numeric questions: work the arithmetic carefully and double-check it. The explanation
+  must show the steps that arrive at exactly the correctAnswer. Do not state one number in
+  the steps and a different number as the answer.
 
 Return JSON exactly:
 { "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ] }`
@@ -510,6 +572,17 @@ practice. Choose the subjects yourself from this menu, using only those that fit
 age and grade, and set each section's question count so the section counts sum to the
 total:
 ${KNOWN_SUBJECTS.map((subject) => `  - ${subject}`).join("\n")}
+
+Shape the plan as a DEEP CORE plus SHORT ENRICHMENT:
+- The CORE is Reading Comprehension, Grammar and Writing, and Math Reasoning. Give these
+  the most questions and real depth — this is where the learner does the substantial work,
+  matched to what they would face in school at this grade.
+- Add 1 to 3 SHORT ENRICHMENT sections (such as Science Investigation, Logic and Patterns,
+  Social Studies, or Critical Thinking) with just 1-2 questions each, to stretch thinking
+  in other directions without diluting the core.
+- Include Vocabulary in Context whenever there is a reading passage.
+Avoid spreading the questions thinly across many tiny sections; depth in the core beats
+breadth.
 
 Weave the interest themes (${input.interests}) into the framing to make the work
 exciting and personally motivating, while keeping the academic rigor real.
@@ -712,37 +785,44 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
     ];
   }
 
+  // Shape: a deep CORE (reading, writing, math) carries most of the work, then 1-2
+  // SHORT enrichment sections add variety without diluting the core.
   if (elementary) {
     return [
-      { subject: "Reading Comprehension", questionCount: 3, skills: ["main idea", "supporting detail", "vocabulary in context"], focus: "An original theme passage with evidence questions." },
+      // Core
+      { subject: "Reading Comprehension", questionCount: 4, skills: ["main idea", "supporting detail", "sequence", "vocabulary in context"], focus: "An original theme passage with evidence questions." },
       { subject: "Vocabulary in Context", questionCount: 3, skills: ["definitions", "context clues", "using words"], focus: "Words pulled from the passage with memory hints." },
-      { subject: "Grammar and Writing", questionCount: 2, skills: ["sentence structure", "punctuation", "clear writing"], focus: "Fix-and-write practice in the learner's voice." },
-      { subject: "Math Reasoning", questionCount: 3, skills: ["multi-step problems", "number patterns", "word problems"], focus: "Story problems that show the setup." },
-      { subject: "Science Investigation", questionCount: 2, skills: ["observation", "evidence", "cause and effect"], focus: "A small investigation linked to the interests." },
+      { subject: "Grammar and Writing", questionCount: 3, skills: ["sentence structure", "punctuation", "clear writing"], focus: "Fix-and-write practice in the learner's voice." },
+      { subject: "Math Reasoning", questionCount: 4, skills: ["multi-step problems", "number patterns", "word problems"], focus: "Story problems that show the setup." },
+      // Short enrichment
+      { subject: "Science Investigation", questionCount: 1, skills: ["observation", "cause and effect"], focus: "A small investigation linked to the interests." },
       { subject: "Logic and Patterns", questionCount: 1, skills: ["pattern recognition", "reasoning"], focus: "A pattern or logic puzzle." }
     ];
   }
 
   if (middle) {
     return [
-      { subject: "Reading Comprehension", questionCount: 4, skills: ["main idea", "evidence", "inference", "tone"], focus: "A substantial original passage with evidence and inference." },
+      // Core
+      { subject: "Reading Comprehension", questionCount: 5, skills: ["main idea", "evidence", "inference", "tone", "author's purpose"], focus: "A substantial original passage with evidence and inference." },
       { subject: "Vocabulary in Context", questionCount: 3, skills: ["context clues", "shades of meaning"], focus: "Stronger words from the passage with examples." },
-      { subject: "Grammar and Writing", questionCount: 2, skills: ["revision", "combining sentences", "explanation writing"], focus: "Revise and explain in clear writing." },
-      { subject: "Math Reasoning", questionCount: 4, skills: ["multi-step reasoning", "ratios", "data"], focus: "Multi-step problems and a small data table." },
+      { subject: "Grammar and Writing", questionCount: 3, skills: ["revision", "combining sentences", "explanation writing"], focus: "Revise and explain in clear writing." },
+      { subject: "Math Reasoning", questionCount: 5, skills: ["multi-step reasoning", "ratios", "data interpretation"], focus: "Multi-step problems and data reasoning." },
+      // Short enrichment
       { subject: "Science Investigation", questionCount: 2, skills: ["hypothesis", "variables", "evidence"], focus: "Interpret a short experiment." },
-      { subject: "Social Studies and History", questionCount: 1, skills: ["cause and effect", "source reasoning"], focus: "A decision-point or source question." },
-      { subject: "Logic and Patterns", questionCount: 2, skills: ["sequences", "logical reasoning"], focus: "Number and logic puzzles." }
+      { subject: "Logic and Patterns", questionCount: 1, skills: ["sequences", "logical reasoning"], focus: "A number or logic puzzle." },
+      { subject: "Social Studies and History", questionCount: 1, skills: ["cause and effect", "source reasoning"], focus: "A decision-point or source question." }
     ];
   }
 
   return [
-    { subject: "Reading Comprehension", questionCount: 5, skills: ["central claim", "evidence", "inference", "tone", "comparing texts"], focus: "One or two SAT-style original passages." },
+    // Core
+    { subject: "Reading Comprehension", questionCount: 6, skills: ["central claim", "evidence", "inference", "tone", "structure", "comparing texts"], focus: "A substantial SAT-style original passage." },
     { subject: "Vocabulary in Context", questionCount: 3, skills: ["vocabulary in context", "precise meaning"], focus: "Academic words tested in context." },
-    { subject: "Grammar and Writing", questionCount: 2, skills: ["concision", "evidence-based writing"], focus: "Revision and a short argument." },
-    { subject: "Math Reasoning", questionCount: 4, skills: ["algebraic reasoning", "percentages", "data interpretation"], focus: "Multi-step and data problems with real choices." },
+    { subject: "Grammar and Writing", questionCount: 3, skills: ["concision", "evidence-based writing", "argument"], focus: "Revision and a short argument." },
+    { subject: "Math Reasoning", questionCount: 5, skills: ["algebraic reasoning", "percentages", "data interpretation"], focus: "Multi-step and data problems with real choices." },
+    // Short enrichment
     { subject: "Science Investigation", questionCount: 2, skills: ["data analysis", "controls", "inference"], focus: "Analyze experimental data." },
-    { subject: "Social Studies and History", questionCount: 1, skills: ["source analysis", "argument"], focus: "Evaluate a historical claim." },
-    { subject: "Logic and Patterns", questionCount: 2, skills: ["sequences", "abstract reasoning"], focus: "Decode rules and patterns." },
+    { subject: "Logic and Patterns", questionCount: 1, skills: ["sequences", "abstract reasoning"], focus: "Decode a rule or pattern." },
     { subject: "Critical Thinking", questionCount: 1, skills: ["synthesis", "argument"], focus: "Connect interest to academic persistence." }
   ];
 }
@@ -839,7 +919,7 @@ function qualityProfileFor(input: WorksheetInput) {
       minHtmlCharacters: 10000,
       minStudentWords: 700,
       minQuestions: input.age <= 8 ? 10 : 12,
-      minReadingWords: input.age <= 8 ? 130 : 200,
+      minReadingWords: input.age <= 8 ? 170 : 280,
       minVocabularyCards: input.age <= 8 ? 4 : 5,
       requiredTerms: ["reading comprehension", "vocabulary", "math reasoning", "answer sheet"]
     };
@@ -850,7 +930,7 @@ function qualityProfileFor(input: WorksheetInput) {
       minHtmlCharacters: 13000,
       minStudentWords: 950,
       minQuestions: 16,
-      minReadingWords: 320,
+      minReadingWords: 460,
       minVocabularyCards: 6,
       requiredTerms: [
         "reading comprehension",
@@ -867,7 +947,7 @@ function qualityProfileFor(input: WorksheetInput) {
     minHtmlCharacters: 17000,
     minStudentWords: 1300,
     minQuestions: 18,
-    minReadingWords: 480,
+    minReadingWords: 650,
     minVocabularyCards: 8,
     requiredTerms: [
       "sat",
@@ -936,10 +1016,8 @@ function assembleWorksheet(
   const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
   const answerContext = { high, isSpace: isSpaceTheme };
   const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
-  const wantsData = blueprintWantsData(blueprint, plannedSections);
-  const dataSnapshot = dataSnapshotBlock(input, blueprint, plannedSections);
+  const dataSnapshot = renderTopicDataTable(content.dataTable);
   const strategyBlock = strategyBlockFor(input, blueprint);
-  const howToUseCards = howToUseCardsFor(input);
   const passage = content.passageHtml
     ? content.passageHtml
     : high
@@ -977,7 +1055,7 @@ function assembleWorksheet(
   }
 
   // Theme-aware question banks, one per canonical subject.
-  const banks = fallbackQuestionBanks({ high, theme, vocabWords, wantsData });
+  const banks = fallbackQuestionBanks({ high, theme, vocabWords });
 
   // Vocabulary questions are templated from the vocabulary words (AI or bank).
   const vocabQuestions: GeneratedQuestion[] = vocabWords.map(([word]) => ({
@@ -1155,12 +1233,7 @@ function assembleWorksheet(
     </svg>
   </section>
 
-  <h2>How To Use This Mission</h2>
-  <section class="grid">
-    ${howToUseCards}
-  </section>
-
-  <h2>Reading Comprehension: Evidence Mission</h2>
+  <h2>Reading Comprehension</h2>
   <article class="passage" data-reading-passage="true">
     ${passage}
   </article>
@@ -1202,9 +1275,10 @@ function highSchoolFallbackPassage(theme: string): string {
 }
 
 function middleSchoolFallbackPassage(theme: string, interests: string): string {
-  return `<p>A learner who enjoys ${theme} can use that interest as a real investigation, not just a decoration on a worksheet. The research team begins by reading a short article, listing facts, and separating evidence from guesses. Because the learner also mentioned ${interests}, the team looks for connections across subjects: how living things move, how bodies use energy, how stories explain discoveries, and how numbers help compare results. To test ideas, the team builds a prototype, which is an early model used to try a plan before trusting it. This makes the mission feel personal while still building serious reading and reasoning skills.</p>
-  <p>Good learners do not treat mistakes as the end of the mission. They treat mistakes as clues. If a reading answer is wrong, the learner can return to the passage and find the sentence that proves the right answer. If a math answer is wrong, the learner can check whether the error happened in the equation, the calculation, or the final label. If a pattern answer is wrong, the learner can compare each step instead of guessing. These habits build confidence because the learner knows what to do next.</p>
-  <p>The strongest strategy is to slow down at the right moment. Fast work feels exciting, but careful work often wins. A student who underlines key words, circles numbers, and explains one reason will usually find more accurate answers. Over time, this kind of practice turns ${theme} from a fun interest into a training ground for reading comprehension, vocabulary, math reasoning, and logical thinking.</p>`;
+  return `<p>Few subjects reward curiosity like ${theme}. What looks simple from a distance usually turns out to be full of moving parts, careful choices, and surprising connections. People who study ${theme} closely notice details that a casual observer walks right past: a small change in conditions, a pattern that repeats, or a number that does not quite fit. Those details are where the real questions begin, and where ${theme} stops being just a hobby and starts becoming an investigation.</p>
+  <p>Consider how someone exploring ${theme} actually works. They begin by observing carefully and writing down what they see, separating what is certain from what is only a guess. Then they look for relationships: when one thing increases, does another rise or fall? Does a result repeat, or was it luck? Because this learner is also interested in ${interests}, they start to notice that ideas from one field can explain another — how forces move objects, how stories shape memory, and how numbers reveal what the eye alone would miss. Connections like these make ${theme} far richer than any single fact about it.</p>
+  <p>Progress in ${theme} rarely comes from getting everything right the first time. It comes from testing an idea, watching it fall short in some small way, and asking exactly what went wrong. A measurement might be off, a step might be skipped, or a hidden assumption might be wrong. Each correction is a clue, and clues add up. Over weeks and months, a beginner who keeps asking precise questions can come to understand ${theme} more deeply than someone who only memorized facts about it.</p>
+  <p>That is why ${theme} is such good training for the mind. To explain a result, a person has to read carefully, reason with numbers, and put their thinking into clear words. To defend a conclusion, they have to point to real evidence instead of a feeling. The very habits that make someone good at ${theme} — patience, attention, and honesty about mistakes — are the same habits that make someone a strong reader, a careful thinker, and a confident problem solver in every subject they meet.</p>`;
 }
 
 function elementaryFallbackPassage(theme: string, interests: string): string {
@@ -1436,9 +1510,8 @@ function fallbackQuestionBanks(args: {
   high: boolean;
   theme: string;
   vocabWords: string[][];
-  wantsData: boolean;
 }): Record<string, string[]> {
-  const { high, theme, vocabWords, wantsData } = args;
+  const { high, theme, vocabWords } = args;
 
   const reading = high
     ? [
@@ -1450,11 +1523,12 @@ function fallbackQuestionBanks(args: {
         "How does the final paragraph refine the argument made earlier in the passage?"
       ]
     : [
-        `What is the main idea of the ${theme} research passage?`,
-        "Which detail from the passage best shows that evidence matters?",
-        "What does the word prototype mean as it is used in the passage?",
-        `How do the learner's interests help the ${theme} mission?`,
-        "What should the team do after a test does not work the first time?"
+        `What is the main idea of the passage about ${theme}? Point to the sentence that proves it.`,
+        "Find one detail in the passage that supports the main idea, and copy it exactly.",
+        "Choose one word from the passage you did not know before. What does it mean from the way it is used?",
+        `What does the author want you to understand about ${theme}? Explain using evidence from the text.`,
+        `In your own words, retell what happens first, next, and last in the passage about ${theme}.`,
+        `Write one question you still have after reading about ${theme}.`
       ];
 
   const vocabulary = vocabWords.map(
@@ -1478,11 +1552,11 @@ function fallbackQuestionBanks(args: {
         "A data table shows study time rising from 20 to 50 minutes while accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?"
       ]
     : [
-        ...(wantsData ? ["Use the Mission Data table. Which practice plan had the best accuracy?"] : []),
-        "A club makes 4 sets of 6 cards. How many cards are there?",
-        "A pattern goes 3, 6, 12, 24. What are the next two numbers?",
-        "A learner reads 12 pages on Monday and 15 pages on Tuesday. How many pages is that in all?",
-        "There are 30 minutes for 5 equal missions. How many minutes can each mission take?"
+        `A ${theme} team scores 4 points in each of 6 rounds. How many points in all? Show your setup.`,
+        "A pattern goes 3, 6, 12, 24, ___, ___. What are the next two numbers, and what is the rule?",
+        `A ${theme} trip is 240 km. If you travel 60 km each hour, how many hours will it take? Show your work.`,
+        "A ticket costs $8. How much do 7 tickets cost? Then find the change you get back from $60.",
+        "There are 30 minutes for 5 equal activities. How many minutes can each one take?"
       ];
 
   const science = [
@@ -1509,10 +1583,10 @@ function fallbackQuestionBanks(args: {
         `Write a two-sentence argument explaining how an interest in ${theme} can build academic persistence.`
       ]
     : [
-        "Look at this rule: add 3 each time. Continue 5, 8, 11, __, __.",
-        "Choose the better evidence: a detail from the passage or a guess from memory. Explain why.",
-        "Draw a tiny diagram that shows the problem before you solve it.",
-        `Write one sentence about how ${theme} can help someone practice.`
+        "Continue the pattern and say the rule in words: 5, 8, 11, 14, ___, ___.",
+        `Three friends finish a ${theme} race. Ana is faster than Beto. Beto is faster than Cy. Who finishes last? Explain how you know.`,
+        "Find the odd one out and say why: 2, 4, 7, 8, 10.",
+        "Sort these into two groups and name the rule you used: circle, ball, square, box, triangle, kite."
       ];
 
   const critical = [
@@ -1634,44 +1708,32 @@ function blueprintWantsData(blueprint: LearningBlueprint, sections: WorksheetSec
   return /\b(data|chart|graph|table|percent|statistics|trend|interpret)\b/.test(planText);
 }
 
-function dataSnapshotBlock(
-  input: WorksheetInput,
-  blueprint: LearningBlueprint,
-  sections: WorksheetSection[]
-): string {
-  const high = input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
-  const middle = !high && input.age >= 11;
-  const wantsData = blueprintWantsData(blueprint, sections);
+// Render a REAL, topic-specific data table the learner interprets. Returns "" when no
+// valid AI table was produced, so we omit the section rather than show filler.
+function renderTopicDataTable(dataTable?: TopicDataTable): string {
+  if (!dataTable) return "";
 
-  if (!wantsData) {
-    return "";
-  }
+  const head = dataTable.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+  const body = dataTable.rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .join("\n        ");
+  const intro = dataTable.intro ? `<p>${escapeHtml(dataTable.intro)}</p>` : "";
+  const question = dataTable.question
+    ? `<p><strong>Interpret it:</strong> ${escapeHtml(dataTable.question)}</p>
+    <div class="write"></div>`
+    : "";
 
-  const theme = escapeHtml(input.interests.split(",")[0]?.trim() || "learning");
-  const title = high ? "Data Snapshot" : middle ? "Mission Data" : "Quick Number Clues";
-  const copy = high
-    ? "Read the labels first, compare numbers second, then write the conclusion last."
-    : middle
-      ? "Use the table to notice what changed, what stayed the same, and what the numbers suggest."
-      : `These quick ${theme} numbers are here only if your mission uses chart or table practice. Read one row at a time.`;
-
-  return `<h2>${title}</h2>
+  return `<h2>${escapeHtml(dataTable.title)}</h2>
   <article class="card">
-    <p class="label">Chart and data interpretation</p>
-    <p>${copy}</p>
+    <p class="label">Read the data</p>
+    ${intro}
     <table class="mini-table">
-      <thead><tr><th>Practice plan</th><th>Minutes</th><th>Accuracy</th><th>Notes</th></tr></thead>
+      <thead><tr>${head}</tr></thead>
       <tbody>
-        <tr><td>Quick review</td><td>20</td><td>68 percent</td><td>Fast but many missed details</td></tr>
-        <tr><td>Evidence notes</td><td>35</td><td>77 percent</td><td>Better reading proof</td></tr>
-        <tr><td>Full strategy</td><td>50</td><td>83 percent</td><td>Best accuracy, slower pace</td></tr>
+        ${body}
       </tbody>
     </table>
-    <svg viewBox="0 0 260 70" role="img" aria-label="Low ink line chart">
-      <path d="M22 58h220M22 58V12"></path>
-      <path d="M40 44L125 33L210 24"></path>
-      <circle cx="40" cy="44" r="3"></circle><circle cx="125" cy="33" r="3"></circle><circle cx="210" cy="24" r="3"></circle>
-    </svg>
+    ${question}
   </article>`;
 }
 
@@ -1700,37 +1762,6 @@ function strategyBlockFor(input: WorksheetInput, blueprint: LearningBlueprint): 
   };
 }
 
-function howToUseCardsFor(input: WorksheetInput): string {
-  const high = input.age >= 15 || ["Grade 9", "Grade 10", "Grade 11", "Grade 12", "College", "Master's"].includes(input.grade);
-  const middle = !high && input.age >= 11;
-  const cards = high
-    ? [
-        ["Close reading", "Underline before answering", "For every reading question, mark the phrase that proves your answer. If you cannot point to a clue, the answer is probably a trap answer."],
-        ["Quant reasoning", "Show the setup", "Write the equation, table, or diagram before calculating. Strong test takers make invisible thinking visible."],
-        ["Strategy", "Eliminate with purpose", "Cross out choices that are too extreme, unsupported, reversed, or only partly true."],
-        ["Reflection", "Finish with one improvement", "After checking the answer sheet, write one habit you will use next time: annotate, estimate, reread, check units, or slow down on tricky words."]
-      ]
-    : middle
-      ? [
-          ["Close reading", "Find the proof", "For every reading question, underline the words that help you answer."],
-          ["Reasoning", "Show the setup", "Write the equation, table, rule, or quick sketch before solving."],
-          ["Focus", "Pause on tricky choices", "If two answers seem possible, reread the question and choose the one with better evidence."],
-          ["Reflection", "Pick one next move", "After checking answers, choose one habit to try next time: reread, estimate, label units, or explain more clearly."]
-        ]
-      : [
-          ["Reading clues", "Point to proof", "Underline one sentence or word that helped you answer."],
-          ["Math steps", "Show your thinking", "Write the number sentence, draw a tiny picture, or circle the important numbers."],
-          ["Focus", "Try one careful move", "If a question feels tricky, slow down and take the next small step."],
-          ["Confidence", "Notice progress", "After checking answers, pick one thing you did well and one thing to try again."]
-        ];
-
-  return cards
-    .map(
-      ([label, title, body]) =>
-        `<article class="card"><p class="label">${escapeHtml(label)}</p><h3>${escapeHtml(title)}</h3><p>${escapeHtml(body)}</p></article>`
-    )
-    .join("");
-}
 
 function watchOutFor(section: string, high: boolean): string {
   if (section === "Reading Comprehension") return high ? "Answers that sound smart but are not proven by the text." : "Guessing from memory instead of pointing to a sentence.";

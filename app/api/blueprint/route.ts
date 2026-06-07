@@ -210,7 +210,13 @@ ${KNOWN_SUBJECTS.map(s => `  - ${s}`).join("\n")}
 
 PANEL INSTRUCTIONS:
 1. PSYCHOLOGIST sets total questions (${bounds.min}–${bounds.max}) and difficulty split.
-2. EDUCATOR chooses subjects and question counts that sum to the total.
+2. EDUCATOR chooses subjects and question counts that sum to the total, shaped as a
+   DEEP CORE plus SHORT ENRICHMENT: give Reading Comprehension, Grammar and Writing, and
+   Math Reasoning the most questions and real school-level depth; add only 1-3 short
+   enrichment sections (Science, Logic, Social Studies, Critical Thinking) at 1-2 questions
+   each. Do not spread questions thinly across many tiny sections — depth in the core wins.
+   Include Vocabulary in Context whenever there is a reading passage. The reading passage
+   word count must match what this learner reads in school at this grade.
 3. COACH sets themeThread — one specific, connected topic derived from the interests.
    (e.g. interests: "volcanoes, minecraft" → themeThread: "Building and surviving volcanic eruptions")
    The theme must weave through every section naturally.
@@ -292,7 +298,7 @@ function normaliseBlueprint(raw: unknown, input: ParsedInput): BlueprintPreview 
     vocabularyPlan:    cleanText(String(r.vocabularyPlan  || fallback.vocabularyPlan), 360),
     testReadinessPlan: cleanText(String(r.testReadinessPlan || fallback.testReadinessPlan), 360),
     reading: {
-      wordCount:    Math.max(60, Math.min(600, Number((r.reading as Record<string,unknown>)?.wordCount) || 200)),
+      wordCount:    Math.max(60, Math.min(800, Number((r.reading as Record<string,unknown>)?.wordCount) || 280)),
       topic:        cleanText(String((r.reading as Record<string,unknown>)?.topic || ""), 160) || fallback.reading.topic,
       lexileTarget: cleanText(String((r.reading as Record<string,unknown>)?.lexileTarget || ""), 40) || fallback.reading.lexileTarget,
     },
@@ -415,7 +421,7 @@ function defaultBlueprint(input: ParsedInput): BlueprintPreview {
     answerExpectations: "Include correct answers, short explanations, skill tested, and next-time tip.",
     vocabularyPlan:     "Hard words with simple definitions, examples, and memory hints.",
     testReadinessPlan:  !early ? "Use evidence, careful reading, logic, and checking work." : "Future test skill building.",
-    reading:   { wordCount: early ? 80 : elem ? 220 : middle ? 300 : 440, topic: `${theme} investigation`, lexileTarget: early ? "400L" : elem ? "680L" : middle ? "800L" : "1000L" },
+    reading:   { wordCount: early ? 80 : elem ? 280 : middle ? 460 : 650, topic: `${theme} investigation`, lexileTarget: early ? "400L" : elem ? "680L" : middle ? "800L" : "1000L" },
     vocabulary:{ wordCount: early ? 3 : elem ? 5 : middle ? 6 : 8 },
     sections,
     funZone:   { activities: early ? ["pattern puzzle","connect the dots"] : ["word search","pattern puzzle","crack the code"] },
