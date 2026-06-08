@@ -65,6 +65,13 @@ model warmth and worksheet depth.
   generation use `llama3.2:3b` on the Always Free CPU. The 7B model can still be
   selected explicitly, but it is no longer the default production path for
   student-facing generation.
+- Set Oracle worksheet generation to the dynamic deterministic engine by default
+  (`WORKSHEET_AI_ENABLED=false`) after live smoke tests showed CPU-only model
+  calls can still exceed a student-friendly wait. This preserves fast, printable,
+  varied worksheets while leaving AI-authored worksheet sections as an opt-in for
+  stronger hardware.
+- Reduced the production blueprint ceiling to 30 seconds; if local AI is busy,
+  the app returns the deterministic expert plan instead of making the user wait.
 
 ## Watch Next
 

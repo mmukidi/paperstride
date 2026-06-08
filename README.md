@@ -60,6 +60,7 @@ LLM_BASE_URL=http://host.docker.internal:11434/v1
 LLM_FAST_MODEL=llama3.2:3b
 LLM_MODEL=llama3.2:3b
 LLM_PASSAGE_MODEL=llama3.2:3b
+WORKSHEET_AI_ENABLED=false
 ```
 
 If Ollama is unavailable, the route returns a deterministic printable HTML worksheet so the site can still be tested and used without paid AI services.

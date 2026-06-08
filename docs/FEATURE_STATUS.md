@@ -27,6 +27,10 @@ accounts or sending learner data to a paid external API.
 - Oracle Compose defaults route blueprint, passage, and worksheet generation
   through the fast local model with bounded timeouts; the slower 7B model remains
   available by explicit env override on stronger hardware
+- Oracle worksheet generation uses the dynamic deterministic engine by default
+  (`WORKSHEET_AI_ENABLED=false`) so student-facing downloads stay fast and do not
+  hang behind CPU-only local model calls; AI-authored worksheet sections remain
+  available by explicit env opt-in
 - Deterministic blueprint fallback when Ollama is unavailable
 - Printable HTML workbook generation
 - Deterministic worksheet fallback when AI generation fails

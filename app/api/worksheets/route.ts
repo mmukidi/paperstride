@@ -186,6 +186,7 @@ const FAST_MODEL = process.env.LLM_FAST_MODEL || "llama3.2:3b";
 // the ENTIRE pipeline on the fast model (the "single-model" speed experiment — no 7B,
 // no model swaps, lowest possible latency; trade some passage prose quality).
 const PASSAGE_MODEL = process.env.LLM_PASSAGE_MODEL || QUALITY_MODEL;
+const WORKSHEET_AI_ENABLED = process.env.WORKSHEET_AI_ENABLED === "true";
 
 function parseOllamaKeepAlive(value: string | undefined): number | string {
   if (!value || value.trim() === "") return -1;
@@ -315,6 +316,10 @@ async function createHtmlWorksheetWithOllama(
   const run = createWorksheetRun(input);
   // Skip blueprint LLM call if the frontend already computed it (plan preview flow).
   const blueprint = prebuiltBlueprint ?? await createLearningBlueprint(input);
+
+  if (!WORKSHEET_AI_ENABLED) {
+    return createFallbackHtmlWorksheet(input, blueprint, run);
+  }
 
   try {
     const html = await createStagedWorksheetHtml(input, blueprint, run);
