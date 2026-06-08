@@ -1,6 +1,6 @@
 # PaperStride Feature Status
 
-Last updated: June 7, 2026
+Last updated: June 8, 2026
 
 This file is the source of truth to update before committing or deploying. If a
 feature changes, update this document before pushing to GitHub or deploying to
@@ -41,6 +41,9 @@ accounts or sending learner data to a paid external API.
   repeating the same puzzle set for identical inputs
 - Dynamic fallback reading scenarios that vary per generation when Ollama is
   unavailable or returns an incomplete passage bundle
+- AI passage generation now has a bounded quality attempt plus a fast repair
+  attempt before using the deterministic passage bank, preventing long waits and
+  reducing unnecessary fallback worksheets when Ollama returns short JSON
 - Fallback reading questions and answer keys now align with the fallback passage
   family instead of referencing stale generic passages
 - AI question validation that drops incomplete model output before rendering
@@ -72,8 +75,8 @@ accounts or sending learner data to a paid external API.
 - Add a small queue or generation lock before opening to multiple users.
 - Add subject focus controls to the frontend if backend subject focus variants
   are kept.
-- Add basic analytics-free health logging: request duration, fallback used, model
-  used, and generation stage.
+- Expand analytics-free health logging beyond the passage path: request duration,
+  fallback used, model used, and generation stage.
 - Expand deterministic banks beyond the new history-grade bands into deeper
   math, science, writing, and logic variants for more countries and curricula.
 - Add multilingual worksheet support, starting with Spanish.

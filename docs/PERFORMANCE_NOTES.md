@@ -1,6 +1,6 @@
 # PaperStride Performance Notes
 
-Last updated: June 7, 2026
+Last updated: June 8, 2026
 
 Track performance changes here before committing or deploying. The goal is to
 keep PaperStride free to run on Oracle Cloud Always Free while still generating
@@ -15,6 +15,9 @@ model warmth and worksheet depth.
   into a passage bundle plus one batched section call when AI is available.
 - Deterministic fallback banks fill gaps immediately instead of retrying weak or
   missing AI output until the user times out.
+- Reading passage generation is capped with a bounded quality attempt and one
+  fast repair attempt, so malformed or too-short model output no longer holds
+  the worksheet request for several minutes.
 - Ollama is called through native `/api/chat`, which allows request-level
   `keep_alive`, `num_thread`, and `num_ctx` tuning.
 - `keep_alive: -1` keeps models resident in RAM, avoiding reloads between the
@@ -48,10 +51,21 @@ model warmth and worksheet depth.
 - Generic high-school fallback questions now reference the generated scenario
   instead of old coach/basketball/technology examples.
 
+## June 8, 2026 Update
+
+- Fixed the production fallback root cause where `OLLAMA_KEEP_ALIVE=-1` was sent
+  as a string and rejected by Ollama's native API.
+- Added a fast passage repair path after thin AI passage output. This keeps the
+  generation path AI-authored when possible, while still preserving deterministic
+  fallback as the final safety net.
+- Reduced the default passage wait ceiling from five minutes to a bounded
+  production-friendly attempt plus repair sequence, improving worst-case latency
+  for families generating worksheets.
+
 ## Watch Next
 
-- Add lightweight request timing logs for blueprint, passage, section, fallback,
-  and final assembly stages.
+- Add lightweight request timing logs for blueprint, section, fallback, and final
+  assembly stages.
 - Keep `OLLAMA_KEEP_ALIVE=-1` as a valid env value; the app parses numeric env
   strings to numbers before calling Ollama so models stay resident without
   triggering duration parsing errors.

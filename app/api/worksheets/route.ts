@@ -205,7 +205,8 @@ const DEFAULT_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
 // keep a generous ceiling for the very first (cold) call after a deploy.
 const LLM_BLUEPRINT_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 180000);
 const LLM_TIMEOUT_MS           = Number(process.env.LLM_TIMEOUT_MS           ||  90000);
-const LLM_PASSAGE_TIMEOUT_MS    = Number(process.env.LLM_PASSAGE_TIMEOUT_MS   || 300000); // 7B passage
+const LLM_PASSAGE_TIMEOUT_MS    = Number(process.env.LLM_PASSAGE_TIMEOUT_MS   ||  70000); // bounded 7B passage attempt
+const LLM_PASSAGE_REPAIR_TIMEOUT_MS = Number(process.env.LLM_PASSAGE_REPAIR_TIMEOUT_MS || 45000);
 // Ollama is always the backend; llmConfigured is always true when the server is running.
 const llmConfigured = true;
 
@@ -402,21 +403,71 @@ async function generatePassageBundle(
     blueprint.sections.find((s) => s.subject === "Vocabulary in Context")?.questionCount ?? profile.minVocabularyCards
   );
 
-  const content = await groqChat({
-    model: PASSAGE_MODEL,                 // 7B by default for prose quality
-    temperature: 0.68,
-    maxTokens: 1700,
-    timeoutMs: LLM_PASSAGE_TIMEOUT_MS,
-    responseFormat: "json_object",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You write original, grade-appropriate reading passages and the comprehension questions about them. Return only valid JSON. Never include the learner's name or any private data."
-      },
-      {
-        role: "user",
-        content: `Write an ORIGINAL reading passage for this learner and the questions about it.
+  const prompt = passageBundlePrompt(input, blueprint, run, profile.minReadingWords, readingCount, vocabCount);
+  const attempts = [
+    {
+      label: "quality",
+      model: PASSAGE_MODEL,
+      temperature: 0.58,
+      maxTokens: passageTokenBudgetFor(input, profile.minReadingWords),
+      timeoutMs: LLM_PASSAGE_TIMEOUT_MS,
+      prompt
+    },
+    {
+      label: "repair",
+      model: FAST_MODEL,
+      temperature: 0.36,
+      maxTokens: passageTokenBudgetFor(input, profile.minReadingWords),
+      timeoutMs: LLM_PASSAGE_REPAIR_TIMEOUT_MS,
+      prompt: `${prompt}
+
+IMPORTANT REPAIR INSTRUCTION:
+The previous passage attempt was too short or malformed. Return complete JSON only.
+Write ${passageParagraphTargetFor(input)} complete paragraphs totaling at least ${profile.minReadingWords} words.
+Do not summarize the task. Do not apologize. Do not stop early.`
+    }
+  ];
+
+  let lastError: unknown = null;
+  for (const attempt of attempts) {
+    try {
+      const started = Date.now();
+      const content = await groqChat({
+        model: attempt.model,
+        temperature: attempt.temperature,
+        maxTokens: attempt.maxTokens,
+        timeoutMs: attempt.timeoutMs,
+        responseFormat: "json_object",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You write original, grade-appropriate reading passages and the comprehension questions about them. Return only valid JSON. Never include the learner's name or any private data."
+          },
+          { role: "user", content: attempt.prompt }
+        ]
+      });
+      const bundle = normalizePassageBundle(content, profile.minReadingWords, readingCount);
+      console.info(`Passage bundle ${attempt.label} succeeded in ${Date.now() - started}ms`);
+      return bundle;
+    } catch (error) {
+      lastError = error;
+      console.warn(`Passage bundle ${attempt.label} attempt failed`, error);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Passage bundle failed.");
+}
+
+function passageBundlePrompt(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint,
+  run: WorksheetRun,
+  minReadingWords: number,
+  readingCount: number,
+  vocabCount: number
+): string {
+  return `Write an ORIGINAL reading passage for this learner and the questions about it.
 
 Learner:
 - Grade or level: ${input.grade}
@@ -428,7 +479,7 @@ Learner:
 - Concrete detail to include naturally: ${run.detail}
 
 Requirements:
-- The passage must be original, engaging, and tied to the interests, at least ${profile.minReadingWords} words, at this exact reading level.
+- The passage must be original, engaging, and tied to the interests, at least ${minReadingWords} words, at this exact reading level.
 - The setting, examples, people, and central problem must feel different on repeated generations for the same learner.
 - Do not reuse PaperStride's older fallback examples about coaches, vague technology feedback, moon rovers, or a generic research mission unless the learner explicitly asks for that exact topic.
 - Follow this blueprint exactly; it is the curriculum plan for the worksheet:
@@ -449,18 +500,21 @@ Return JSON exactly:
   "passageParagraphs": ["paragraph 1", "paragraph 2"],
   "vocab": [ { "word": "", "definition": "", "example": "", "hint": "" } ],
   "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]
-}`
-      }
-    ]
-  });
+}`;
+}
 
+function normalizePassageBundle(
+  content: string,
+  minReadingWords: number,
+  readingCount: number
+): { passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[] } {
   const parsed = parseJsonContent(content) as Record<string, unknown>;
   const paragraphs = Array.isArray(parsed.passageParagraphs)
     ? parsed.passageParagraphs.map((p) => cleanGeneratedParagraph(String(p))).filter(Boolean)
     : [];
   const wordCount = paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
-  if (!paragraphs.length || wordCount < profile.minReadingWords) {
-    throw new Error("Passage bundle had too little complete passage text.");
+  if (!paragraphs.length || wordCount < minReadingWords) {
+    throw new Error(`Passage bundle had too little complete passage text (${wordCount}/${minReadingWords} words).`);
   }
 
   const passageHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("\n    ");
@@ -468,6 +522,18 @@ Return JSON exactly:
   const readingQuestions = normalizeGeneratedQuestions(parsed.questions, readingCount);
 
   return { passageHtml, vocab, readingQuestions };
+}
+
+function passageParagraphTargetFor(input: WorksheetInput): number {
+  if (input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten") return 2;
+  if (input.age <= 10) return 3;
+  if (isHighSchoolOrAdult(input)) return 5;
+  return 4;
+}
+
+function passageTokenBudgetFor(input: WorksheetInput, minReadingWords: number): number {
+  const questionBudget = isHighSchoolOrAdult(input) ? 650 : 500;
+  return Math.min(2600, Math.max(1400, Math.ceil(minReadingWords * 2.2) + questionBudget));
 }
 
 // Generate questions for ALL non-reading sections in a single call. Returns a map of
