@@ -61,6 +61,9 @@ model warmth and worksheet depth.
 - Reduced the default passage wait ceiling from five minutes to a bounded
   production-friendly attempt plus repair sequence, improving worst-case latency
   for families generating worksheets.
+- Updated Oracle Compose defaults so passage generation uses `llama3.2:3b` on
+  the Always Free CPU. The 7B model can still be selected explicitly, but it is
+  no longer the default production path for student-facing generation.
 
 ## Watch Next
 
@@ -70,5 +73,5 @@ model warmth and worksheet depth.
   strings to numbers before calling Ollama so models stay resident without
   triggering duration parsing errors.
 - Add a simple queue or generation lock before opening to more users.
-- Test the single-model experiment (`LLM_PASSAGE_MODEL=llama3.2:3b`) against
-  worksheet quality, especially for older grades.
+- Continue comparing fast-model passage quality for older grades against the 7B
+  override on stronger hardware.
