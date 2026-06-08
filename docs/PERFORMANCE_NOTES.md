@@ -52,6 +52,9 @@ model warmth and worksheet depth.
 
 - Add lightweight request timing logs for blueprint, passage, section, fallback,
   and final assembly stages.
+- Keep `OLLAMA_KEEP_ALIVE=-1` as a valid env value; the app parses numeric env
+  strings to numbers before calling Ollama so models stay resident without
+  triggering duration parsing errors.
 - Add a simple queue or generation lock before opening to more users.
 - Test the single-model experiment (`LLM_PASSAGE_MODEL=llama3.2:3b`) against
   worksheet quality, especially for older grades.

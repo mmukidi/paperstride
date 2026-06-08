@@ -10,8 +10,16 @@ const ollamaEndpoint = `${OLLAMA_HOST}/api/chat`;
 // The blueprint is internal planning that we normalize/validate anyway, so it runs on the
 // FAST model — this turns the preview from a ~3 min wait into well under a minute.
 const BLUEPRINT_MODEL = process.env.LLM_BLUEPRINT_MODEL || process.env.LLM_FAST_MODEL || "llama3.2:3b";
+
+function parseOllamaKeepAlive(value: string | undefined): number | string {
+  if (!value || value.trim() === "") return -1;
+  const trimmed = value.trim();
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  return trimmed;
+}
+
 const OLLAMA_NUM_THREAD = Number(process.env.OLLAMA_NUM_THREAD || 4);
-const OLLAMA_KEEP_ALIVE: number | string = process.env.OLLAMA_KEEP_ALIVE || -1;
+const OLLAMA_KEEP_ALIVE = parseOllamaKeepAlive(process.env.OLLAMA_KEEP_ALIVE);
 const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
 const LLM_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 180000);
 

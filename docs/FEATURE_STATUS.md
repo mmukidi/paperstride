@@ -21,6 +21,8 @@ accounts or sending learner data to a paid external API.
   time available
 - Expert plan preview before worksheet generation
 - Local Ollama backend path using native `/api/chat`
+- Ollama `keep_alive` env parsing accepts numeric strings such as `-1` so the
+  native API receives a valid number instead of an invalid duration string
 - Fast blueprint model path with in-memory cache
 - Deterministic blueprint fallback when Ollama is unavailable
 - Printable HTML workbook generation

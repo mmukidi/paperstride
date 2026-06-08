@@ -187,11 +187,18 @@ const FAST_MODEL = process.env.LLM_FAST_MODEL || "llama3.2:3b";
 // no model swaps, lowest possible latency; trade some passage prose quality).
 const PASSAGE_MODEL = process.env.LLM_PASSAGE_MODEL || QUALITY_MODEL;
 
+function parseOllamaKeepAlive(value: string | undefined): number | string {
+  if (!value || value.trim() === "") return -1;
+  const trimmed = value.trim();
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  return trimmed;
+}
+
 // Performance knobs (baked into every request so they apply without server config):
 //  - keep_alive: -1 keeps models resident in RAM so swapping 7B<->3B never reloads from disk.
 //  - num_thread: pin to physical cores (Oracle A1 = 4) — all cores on one request.
 const OLLAMA_NUM_THREAD = Number(process.env.OLLAMA_NUM_THREAD || 4);
-const OLLAMA_KEEP_ALIVE: number | string = process.env.OLLAMA_KEEP_ALIVE || -1;
+const OLLAMA_KEEP_ALIVE = parseOllamaKeepAlive(process.env.OLLAMA_KEEP_ALIVE);
 const DEFAULT_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
 
 // Timeouts. Blueprint now runs on the fast model so it no longer needs minutes, but we
