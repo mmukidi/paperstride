@@ -24,9 +24,9 @@ accounts or sending learner data to a paid external API.
 - Ollama `keep_alive` env parsing accepts numeric strings such as `-1` so the
   native API receives a valid number instead of an invalid duration string
 - Fast blueprint model path with in-memory cache
-- Oracle Compose defaults route passage generation through the fast local model
-  with bounded timeouts; the slower 7B model remains available by explicit env
-  override on stronger hardware
+- Oracle Compose defaults route blueprint, passage, and worksheet generation
+  through the fast local model with bounded timeouts; the slower 7B model remains
+  available by explicit env override on stronger hardware
 - Deterministic blueprint fallback when Ollama is unavailable
 - Printable HTML workbook generation
 - Deterministic worksheet fallback when AI generation fails

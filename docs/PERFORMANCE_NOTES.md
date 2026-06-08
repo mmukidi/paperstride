@@ -61,9 +61,10 @@ model warmth and worksheet depth.
 - Reduced the default passage wait ceiling from five minutes to a bounded
   production-friendly attempt plus repair sequence, improving worst-case latency
   for families generating worksheets.
-- Updated Oracle Compose defaults so passage generation uses `llama3.2:3b` on
-  the Always Free CPU. The 7B model can still be selected explicitly, but it is
-  no longer the default production path for student-facing generation.
+- Updated Oracle Compose defaults so blueprint, passage, and worksheet
+  generation use `llama3.2:3b` on the Always Free CPU. The 7B model can still be
+  selected explicitly, but it is no longer the default production path for
+  student-facing generation.
 
 ## Watch Next
 

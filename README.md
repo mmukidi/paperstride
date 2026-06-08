@@ -58,7 +58,7 @@ Set these on the server to use the local Ollama backend:
 ```bash
 LLM_BASE_URL=http://host.docker.internal:11434/v1
 LLM_FAST_MODEL=llama3.2:3b
-LLM_MODEL=qwen2.5:7b-instruct
+LLM_MODEL=llama3.2:3b
 LLM_PASSAGE_MODEL=llama3.2:3b
 ```
 
