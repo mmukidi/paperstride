@@ -48,6 +48,9 @@ accounts or sending learner data to a paid external API.
   repeating the same puzzle set for identical inputs
 - Dynamic fallback reading scenarios that vary per generation when Ollama is
   unavailable or returns an incomplete passage bundle
+- Broad-interest deterministic passages now avoid the old generic "learner who
+  enjoys..." opening and use longer grade-band mission variants for stronger
+  reading-level fit
 - AI passage generation now has a bounded quality attempt plus a fast repair
   attempt before using the deterministic passage bank, preventing long waits and
   reducing unnecessary fallback worksheets when Ollama returns short JSON

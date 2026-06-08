@@ -72,6 +72,8 @@ model warmth and worksheet depth.
   stronger hardware.
 - Reduced the production blueprint ceiling to 30 seconds; if local AI is busy,
   the app returns the deterministic expert plan instead of making the user wait.
+- Reworked broad-interest deterministic reading passages to be longer and more
+  varied by grade band, improving quality without adding model calls.
 
 ## Watch Next
 
