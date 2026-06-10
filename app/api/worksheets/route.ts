@@ -1553,6 +1553,322 @@ function sleep(milliseconds: number): Promise<void> {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dynamic worksheet formatting helpers
+// Each learner gets a layout, palette, section order, and question-card format
+// that is tuned to their age band, interests, and selected challenge level.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type AgeBand = "early" | "elementary" | "middle" | "high";
+
+function ageBandFor(input: WorksheetInput): AgeBand {
+  if (input.age <= 6 || input.grade === "Pre-K" || input.grade === "Kindergarten") return "early";
+  if (isHighSchoolOrAdult(input)) return "high";
+  if (input.age >= 11) return "middle";
+  return "elementary";
+}
+
+type Palette = {
+  accent: string; accentDark: string; soft: string; warm: string;
+  bg: string; muted: string; line: string;
+};
+
+function interestPaletteFor(theme: string): Palette {
+  const t = theme.toLowerCase();
+  if (isNatureTheme(t) && !t.includes("space"))
+    return { accent:"#2d6a4f", accentDark:"#1b4332", soft:"#d8f3dc", warm:"#f0f4c3", bg:"#f8fff8", muted:"#4a6741", line:"#b7e4c7" };
+  if (isTechnologyTheme(t))
+    return { accent:"#1565c0", accentDark:"#0d47a1", soft:"#e3f2fd", warm:"#e8eaf6", bg:"#f4f8ff", muted:"#455a64", line:"#bbdefb" };
+  if (/space|star|planet|astronaut|rocket|cosmos|galaxy/i.test(t))
+    return { accent:"#4527a0", accentDark:"#1a0072", soft:"#ede7f6", warm:"#fff8e1", bg:"#f5f0ff", muted:"#5c6bc0", line:"#d1c4e9" };
+  if (isSportsTheme(t))
+    return { accent:"#b71c1c", accentDark:"#7f0000", soft:"#ffebee", warm:"#fff8e1", bg:"#fffafa", muted:"#795548", line:"#ffcdd2" };
+  if (isArtTheme(t))
+    return { accent:"#6a1b9a", accentDark:"#38006b", soft:"#f3e5f5", warm:"#fff8e1", bg:"#fdf5ff", muted:"#7b1fa2", line:"#e1bee7" };
+  if (isMusicTheme(t))
+    return { accent:"#e65100", accentDark:"#bf360c", soft:"#fff3e0", warm:"#f9fbe7", bg:"#fffaf5", muted:"#6d4c41", line:"#ffccbc" };
+  if (isHistoryTheme(t))
+    return { accent:"#4e342e", accentDark:"#260e04", soft:"#efebe9", warm:"#fef3e2", bg:"#fdf8f4", muted:"#795548", line:"#d7ccc8" };
+  if (isBooksTheme(t))
+    return { accent:"#1565c0", accentDark:"#003c8f", soft:"#e3f2fd", warm:"#fff9e6", bg:"#f5f9ff", muted:"#546e7a", line:"#bbdefb" };
+  if (isMediaTheme(t))
+    return { accent:"#212121", accentDark:"#000000", soft:"#f5f5f5", warm:"#fff8e1", bg:"#fafafa", muted:"#616161", line:"#e0e0e0" };
+  if (isCookingTheme(t))
+    return { accent:"#e65100", accentDark:"#bf360c", soft:"#fff3e0", warm:"#f1f8e9", bg:"#fffaf5", muted:"#6d4c41", line:"#ffccbc" };
+  return { accent:"#126163", accentDark:"#0a3f40", soft:"#eef5f1", warm:"#fff8e8", bg:"#f4f4ef", muted:"#5d6966", line:"#d7ddd4" };
+}
+
+function interestSvgFor(theme: string, ageBand: AgeBand): string {
+  const t = theme.toLowerCase();
+  const sz = ageBand === "early" ? 100 : 80;
+  const w = `width:${sz}px;height:${sz}px;flex-shrink:0;`;
+  if (/animal|pet|dog|cat|bird|fish|wildlife|zoo|farm/i.test(t) || (isNatureTheme(t) && !t.includes("space")))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Animals icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><ellipse cx="45" cy="56" rx="26" ry="20"/><circle cx="28" cy="34" r="9"/><circle cx="62" cy="34" r="9"/><circle cx="38" cy="50" r="3" fill="currentColor" stroke="none"/><circle cx="52" cy="50" r="3" fill="currentColor" stroke="none"/><path d="M38 62 Q45 68 52 62" stroke-linecap="round"/><path d="M18 54 Q12 46 16 40" stroke-linecap="round"/><path d="M72 54 Q78 46 74 40" stroke-linecap="round"/></svg>`;
+  if (isTechnologyTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Tech icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><rect x="14" y="26" width="62" height="40" rx="12"/><line x1="34" y1="46" x2="34" y2="54" stroke-linecap="round" stroke-width="3"/><line x1="30" y1="50" x2="38" y2="50" stroke-linecap="round" stroke-width="3"/><circle cx="57" cy="40" r="4"/><circle cx="65" cy="48" r="4"/><line x1="22" y1="26" x2="18" y2="16" stroke-linecap="round"/><line x1="68" y1="26" x2="72" y2="16" stroke-linecap="round"/></svg>`;
+  if (/space|star|planet|astronaut|rocket|cosmos|galaxy/i.test(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Space icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M45 14 L45 62"/><path d="M45 14 C35 30 32 42 35 62 L55 62 C58 42 55 30 45 14Z"/><ellipse cx="45" cy="60" rx="15" ry="6"/><path d="M28 50 Q18 56 22 64 Q30 64 35 58" stroke-linecap="round"/><path d="M62 50 Q72 56 68 64 Q60 64 55 58" stroke-linecap="round"/><circle cx="72" cy="22" r="4"/><circle cx="20" cy="30" r="3"/></svg>`;
+  if (isSportsTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Sports icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M30 62 L30 36 L45 28 L60 36 L60 62 Z"/><path d="M20 62 L70 62" stroke-linecap="round" stroke-width="3"/><path d="M25 62 L25 70 L65 70 L65 62"/><path d="M38 62 L38 46 L52 46 L52 62"/></svg>`;
+  if (isArtTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Art icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><ellipse cx="42" cy="54" rx="26" ry="20"/><circle cx="30" cy="46" r="6"/><circle cx="52" cy="46" r="6"/><circle cx="35" cy="60" r="5"/><circle cx="50" cy="62" r="5"/><path d="M56 28 L70 16 M58 26 L72 28 L70 16" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  if (isMusicTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Music icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M34 64 L34 26 L68 20 L68 56" stroke-linecap="round" stroke-linejoin="round"/><circle cx="27" cy="64" r="9"/><circle cx="61" cy="56" r="9"/><line x1="34" y1="38" x2="68" y2="32"/></svg>`;
+  if (isHistoryTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="History icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><rect x="18" y="16" width="54" height="62" rx="4"/><path d="M28 32 L62 32 M28 42 L56 42 M28 52 L60 52 M28 62 L50 62" stroke-linecap="round"/><rect x="26" y="12" width="38" height="10" rx="2"/></svg>`;
+  if (isBooksTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Books icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M45 18 C45 18 26 24 26 72 L45 66 L64 72 C64 72 64 24 45 18Z"/><path d="M45 18 L45 66" stroke-dasharray="4 3"/><path d="M16 26 L26 22 L26 72 L16 76Z"/><path d="M74 26 L64 22 L64 72 L74 76Z"/></svg>`;
+  if (isCookingTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Cooking icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M24 52 Q24 30 45 30 Q66 30 66 52 L66 60 L24 60 Z"/><line x1="14" y1="60" x2="76" y2="60" stroke-linecap="round" stroke-width="3"/><line x1="45" y1="60" x2="45" y2="74" stroke-linecap="round"/><path d="M34 20 Q34 14 38 14 Q38 20 42 20 Q42 14 46 14 Q46 20 50 20 Q50 14 54 14 Q54 20 54 26 L34 26 Z"/></svg>`;
+  if (isMediaTheme(t))
+    return `<svg viewBox="0 0 90 90" role="img" aria-label="Media icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><rect x="12" y="22" width="66" height="46" rx="5"/><polygon points="38,36 38,58 62,47" fill="currentColor" stroke="none"/></svg>`;
+  // default document icon
+  return `<svg viewBox="0 0 90 90" role="img" aria-label="Learning icon" style="${w}" stroke="currentColor" fill="none" stroke-width="2.5"><rect x="16" y="14" width="56" height="66" rx="5"/><path d="M26 30 L64 30 M26 42 L58 42 M26 54 L62 54 M26 66 L50 66" stroke-linecap="round"/><circle cx="66" cy="20" r="10"/><path d="M62 20 L64 23 L72 16" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function sectionOrderFor(sections: WorksheetSection[], theme: string): WorksheetSection[] {
+  const t = theme.toLowerCase();
+  const priority: Record<string, number> =
+    (isTechnologyTheme(t) || isSportsTheme(t))
+      ? { "Math Reasoning":0, "Logic and Patterns":1, "Reading Comprehension":2, "Vocabulary in Context":3, "Science Investigation":4, "Grammar and Writing":5, "Social Studies and History":6, "Critical Thinking":7 }
+    : (isArtTheme(t) || isMusicTheme(t))
+      ? { "Reading Comprehension":0, "Grammar and Writing":1, "Vocabulary in Context":2, "Critical Thinking":3, "Math Reasoning":4, "Logic and Patterns":5, "Science Investigation":6, "Social Studies and History":7 }
+    : isHistoryTheme(t)
+      ? { "Reading Comprehension":0, "Social Studies and History":1, "Vocabulary in Context":2, "Grammar and Writing":3, "Math Reasoning":4, "Critical Thinking":5, "Science Investigation":6, "Logic and Patterns":7 }
+    : (isNatureTheme(t) || isCookingTheme(t))
+      ? { "Reading Comprehension":0, "Science Investigation":1, "Vocabulary in Context":2, "Math Reasoning":3, "Grammar and Writing":4, "Logic and Patterns":5, "Critical Thinking":6, "Social Studies and History":7 }
+    : { "Reading Comprehension":0, "Vocabulary in Context":1, "Grammar and Writing":2, "Math Reasoning":3, "Science Investigation":4, "Logic and Patterns":5, "Social Studies and History":6, "Critical Thinking":7 };
+  return [...sections].sort((a, b) => (priority[a.subject] ?? 99) - (priority[b.subject] ?? 99));
+}
+
+function worksheetCss(palette: Palette, ageBand: AgeBand): string {
+  const fs   = ageBand === "early" ? 18 : ageBand === "elementary" ? 15 : ageBand === "middle" ? 14 : 13;
+  const h1   = ageBand === "early" ? 26 : ageBand === "elementary" ? 24 : ageBand === "middle" ? 22 : 20;
+  const h2   = ageBand === "early" ? 20 : ageBand === "elementary" ? 18 : 16;
+  const h3   = ageBand === "early" ? 18 : ageBand === "elementary" ? 15 : 14;
+  const lh   = ageBand === "early" ? 1.85 : ageBand === "elementary" ? 1.6 : 1.45;
+  const cols = ageBand === "early" ? "1fr" : "repeat(2, minmax(0,1fr))";
+  const ansCols = ageBand === "high" ? "repeat(3,minmax(0,1fr))" : cols;
+  const wh   = ageBand === "early" ? 80 : 58;
+  const wc   = ageBand === "early" ? 52 : 34;
+  const we   = ageBand === "early" ? 140 : 104;
+  const rule = ageBand === "early" ? "30px" : "25px";
+  return `
+  :root{color-scheme:light;--ink:#17211f;--muted:${palette.muted};--line:${palette.line};--accent:${palette.accent};--accent-dark:${palette.accentDark};--soft:${palette.soft};--warm:${palette.warm};--bg:${palette.bg};}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif;font-size:${fs}px;line-height:${lh};}
+  .page{background:#fff;max-width:210mm;min-height:297mm;margin:16px auto;padding:11mm;border:1px solid var(--line);}
+  h1,h2,h3,p{margin-top:0;}
+  h1{font-size:${h1}px;line-height:1.1;margin-bottom:8px;font-family:Arial,Helvetica,sans-serif;}
+  h2{font-size:${h2}px;border-bottom:3px solid var(--accent);padding-bottom:5px;margin:22px 0 12px;font-family:Arial,Helvetica,sans-serif;color:var(--accent-dark);}
+  h3{font-size:${h3}px;margin-bottom:6px;font-family:Arial,Helvetica,sans-serif;}
+  .meta,.tip{color:var(--muted);font-size:${fs - 2}px;}
+  /* Hero */
+  .hero{display:flex;gap:16px;align-items:center;justify-content:space-between;border:3px solid var(--accent);border-radius:10px;padding:16px 20px;background:var(--warm);margin-bottom:20px;}
+  .hero-svg{color:var(--accent);flex-shrink:0;}
+  .challenge-badge{display:inline-block;padding:3px 12px;border-radius:20px;background:var(--accent);color:#fff;font-size:${fs - 3}px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-top:8px;font-family:Arial,sans-serif;}
+  /* Grid layouts */
+  .grid{display:grid;grid-template-columns:${cols};gap:${ageBand === "early" ? 14 : 10}px;}
+  .answer-grid{display:grid;grid-template-columns:${ansCols};gap:10px;}
+  .vocab-grid{display:grid;grid-template-columns:${cols};gap:8px;}
+  /* Cards */
+  .card,.answer,.vocab-card{border:1px solid var(--line);border-radius:8px;padding:${ageBand === "early" ? 14 : 10}px;break-inside:avoid;}
+  .card{background:#fff;border-left:4px solid var(--accent);}
+  .answer{background:#fbfbf7;}
+  .vocab-card{background:var(--soft);}
+  /* Vocab table (high school) */
+  .vocab-table{width:100%;border-collapse:collapse;font-size:${fs - 1}px;}
+  .vocab-table th{background:var(--accent);color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-family:Arial,sans-serif;}
+  .vocab-table td{border:1px solid var(--line);padding:5px 8px;vertical-align:top;}
+  .vocab-table tr:nth-child(even) td{background:var(--soft);}
+  /* Passage */
+  .passage{border:2px solid var(--line);padding:${ageBand === "early" ? 16 : 12}px;background:#fff;border-radius:8px;${ageBand !== "early" ? "columns:2 260px;column-gap:18px;" : ""}font-size:${ageBand === "early" ? fs + 1 : fs}px;}
+  .passage p{margin-bottom:${ageBand === "early" ? 14 : 8}px;}
+  .line-num{color:var(--muted);font-size:10px;user-select:none;margin-right:5px;font-family:monospace;}
+  /* Section heading */
+  .section-head{margin:18px 0 8px;padding:7px 12px;background:var(--soft);border-left:5px solid var(--accent);border-radius:0 8px 8px 0;font-size:${h3}px;font-family:Arial,sans-serif;color:var(--accent-dark);font-weight:700;}
+  /* Labels */
+  .label{color:var(--accent);font-size:${fs - 3}px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;}
+  /* Write spaces */
+  .write{min-height:${wh}px;margin-top:8px;border-radius:4px;background:repeating-linear-gradient(to bottom,transparent 0,transparent calc(${rule} - 1px),var(--line) ${rule});}
+  .write--compact{min-height:${wc}px;}
+  .write--extended{min-height:${we}px;}
+  .write--draw{min-height:90px;border:2px dashed var(--line);border-radius:10px;background:var(--soft);}
+  .write--graph{min-height:${wh}px;margin-top:8px;background-image:repeating-linear-gradient(var(--line) 0,var(--line) 1px,transparent 1px,transparent 100%),repeating-linear-gradient(90deg,var(--line) 0,var(--line) 1px,transparent 1px,transparent 100%);background-size:20px 20px;border-radius:4px;}
+  /* MCQ choices */
+  .choices{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
+  .choice-pill{display:inline-flex;align-items:center;gap:4px;border:1.5px solid var(--accent);border-radius:20px;padding:4px 10px;font-size:${fs - 2}px;}
+  .choice-letter{font-weight:700;color:var(--accent);min-width:16px;}
+  .choice-line{font-size:${fs - 2}px;color:#303836;}
+  /* Evidence prompt */
+  .evidence-prompt{font-size:${fs - 3}px;color:var(--muted);font-style:italic;margin-top:4px;border-left:2px solid var(--accent);padding-left:6px;}
+  /* Hint */
+  .hint{color:var(--muted);font-size:${fs - 3}px;margin-bottom:0;border-top:1px solid var(--line);margin-top:6px;padding-top:4px;}
+  /* Fun zone */
+  .fun-card{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:12px;}
+  .puzzle-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0;}
+  .puzzle-shape svg{width:26px;height:26px;}
+  .puzzle-blank{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px dashed var(--accent);border-radius:4px;font-weight:700;color:var(--accent);}
+  .puzzle-svg{width:100%;max-width:200px;height:auto;margin-top:4px;}
+  .puzzle-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .puzzle-cap{font-size:12px;color:var(--muted);margin:0 0 2px;}
+  .puzzle-code{font-family:monospace;font-size:16px;letter-spacing:1px;margin:6px 0;}
+  .puzzle-word{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:1px 6px;margin:2px;font-size:12px;}
+  .ws-grid{border-collapse:collapse;margin-top:6px;}
+  .ws-grid td{border:1px solid var(--line);width:21px;height:21px;text-align:center;font-family:monospace;font-size:12px;}
+  .magic-square{margin-top:6px;}
+  .magic-square td{border:1px solid var(--ink);width:34px;height:34px;text-align:center;font-size:16px;font-weight:700;}
+  .logic-grid{border-collapse:collapse;margin-top:6px;}
+  .logic-grid th,.logic-grid td{border:1px solid var(--line);padding:4px 8px;text-align:center;font-size:13px;}
+  svg.worksheet-svg{max-width:100%;height:auto;stroke:var(--accent);fill:none;stroke-width:2;}
+  @media(max-width:720px){.page{margin:0;min-height:auto;padding:18px;}.hero,.grid,.answer-grid,.vocab-grid{grid-template-columns:1fr;}.passage{columns:1;}}
+  @media print{
+    body{background:#fff;font-size:${ageBand === "high" ? 11 : 12}pt;}
+    .page{margin:0;border:0;min-height:297mm;padding:10mm;box-shadow:none;}
+    .card,.answer,.hero,.vocab-card{border-color:#999;}
+    .passage{${ageBand !== "early" ? "columns:2;" : ""}}
+    .question{page-break-inside:avoid;}
+    .write{background:repeating-linear-gradient(to bottom,transparent 0,transparent calc(${rule} - 1px),#aaa ${rule});}
+  }`;
+}
+
+function workbookTitleFor(theme: string, ageBand: AgeBand): string {
+  const t = theme.toLowerCase();
+  if (ageBand === "early") return `${escapeHtml(theme)} Explorer`;
+  if (isTechnologyTheme(t)) return `${escapeHtml(theme)} Design Lab`;
+  if (isSportsTheme(t)) return `${escapeHtml(theme)} Performance Lab`;
+  if (isArtTheme(t)) return `${escapeHtml(theme)} Studio`;
+  if (isMusicTheme(t)) return `${escapeHtml(theme)} Composition Lab`;
+  if (isHistoryTheme(t)) return `${escapeHtml(theme)} Archive Investigation`;
+  if (isBooksTheme(t)) return `${escapeHtml(theme)} Literary Workbook`;
+  if (isNatureTheme(t)) return `${escapeHtml(theme)} Field Investigation`;
+  if (isCookingTheme(t)) return `${escapeHtml(theme)} Test Kitchen`;
+  return `${escapeHtml(theme)} Learning Mission`;
+}
+
+function heroBandHtml(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint,
+  rawTheme: string,
+  ageBand: AgeBand,
+  grade: string,
+  allInterests: string
+): string {
+  const svg = interestSvgFor(rawTheme, ageBand);
+  const title = workbookTitleFor(rawTheme, ageBand);
+  const challenge = escapeHtml(blueprint.challengeLevel || "balanced");
+  const mission = escapeHtml(learnerFriendlyMissionCopy(input, blueprint));
+  return `<section class="hero">
+    <div>
+      <p class="label">PaperStride · ${escapeHtml(grade)}</p>
+      <h1>${title}</h1>
+      <p class="meta">For {{LEARNER_NICKNAME}} · Age ${input.age} · ${allInterests}</p>
+      <p>${mission}</p>
+      <span class="challenge-badge">${challenge} level</span>
+    </div>
+    <div class="hero-svg">${svg}</div>
+  </section>`;
+}
+
+const SECTION_EMOJI: Record<string, string> = {
+  "Reading Comprehension":   "📖",
+  "Vocabulary in Context":   "💬",
+  "Grammar and Writing":     "✏️",
+  "Math Reasoning":          "🔢",
+  "Science Investigation":   "🔬",
+  "Social Studies and History": "🌍",
+  "Logic and Patterns":      "🧩",
+  "Critical Thinking":       "💡",
+};
+
+function renderQuestionCardDynamic(q: RenderQuestion, ageBand: AgeBand): string {
+  const isMath  = q.section === "Math Reasoning" || q.section === "Logic and Patterns";
+  const isWrite = q.section === "Grammar and Writing" || q.section === "Critical Thinking";
+  const needsExtended = isWrite || /write|explain|design|recommend|compare|argument|paragraph|brief|label|plan/i.test(q.promptHtml);
+
+  let writeClass = "write";
+  if (q.choices.length) {
+    writeClass = "write write--compact";
+  } else if (isMath) {
+    writeClass = ageBand === "early" ? "write write--draw" : "write write--graph";
+  } else if (needsExtended) {
+    writeClass = "write write--extended";
+  } else if (ageBand === "early") {
+    writeClass = "write write--draw";
+  }
+
+  // Choice rendering — pill buttons for young learners, inline text for older
+  let choicesHtml = "";
+  if (q.choices.length) {
+    if (ageBand === "early" || ageBand === "elementary") {
+      choicesHtml = `<div class="choices">${q.choices.map((opt, i) =>
+        `<span class="choice-pill"><span class="choice-letter">${String.fromCharCode(65 + i)}.</span> ${opt}</span>`
+      ).join("")}</div>`;
+    } else {
+      choicesHtml = `<p class="choice-line">${q.choices.map((opt, i) =>
+        `${String.fromCharCode(65 + i)}. ${opt}`
+      ).join("&nbsp;&nbsp;")}</p>`;
+    }
+  }
+
+  // Evidence underline prompt for high-school reading questions
+  const evidencePrompt = ageBand === "high" && q.section === "Reading Comprehension"
+    ? `<p class="evidence-prompt">→ Underline the sentence in the passage that supports your answer.</p>` : "";
+
+  const hintHtml = isMath && !q.choices.length
+    ? `<p class="hint">Show your setup, working steps, and final answer in the box above.</p>`
+    : `<p class="hint">${escapeHtml(q.hint)}</p>`;
+
+  return `<article class="card question" data-question="true">
+        <p class="label">Q${q.number} | ${escapeHtml(q.section)}</p>
+        <h3>${q.promptHtml}</h3>
+        ${choicesHtml}
+        ${evidencePrompt}
+        <div class="${writeClass}"></div>
+        ${hintHtml}
+      </article>`;
+}
+
+function vocabSectionHtml(vocabWords: string[][], ageBand: AgeBand): string {
+  if (ageBand === "early") {
+    return `<section class="vocab-grid">${vocabWords.map(([word, definition]) => `
+      <article class="vocab-card" data-vocab="true">
+        <h3 style="font-size:20px;color:var(--accent-dark);">${escapeHtml(word)}</h3>
+        <p><strong>Means:</strong> ${escapeHtml(definition)}</p>
+        <div class="write write--draw" style="min-height:60px;" aria-label="Draw or write the word"></div>
+      </article>`).join("")}</section>`;
+  }
+  if (ageBand === "high") {
+    return `<table class="vocab-table" aria-label="Vocabulary in context">
+      <thead><tr><th>Word</th><th>Definition</th><th>Example in context</th><th>Memory hook</th></tr></thead>
+      <tbody>${vocabWords.map(([word, definition, example, hint]) => `
+        <tr>
+          <td><strong>${escapeHtml(word)}</strong></td>
+          <td>${escapeHtml(definition)}</td>
+          <td><em>${escapeHtml(example || "")}</em></td>
+          <td style="font-size:12px;">${escapeHtml(hint || "")}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+  }
+  // Elementary / Middle: card grid
+  return `<section class="vocab-grid">${vocabWords.map(([word, definition, example, hint]) => `
+    <article class="vocab-card" data-vocab="true">
+      <h3>${escapeHtml(word)}</h3>
+      <p><strong>Definition:</strong> ${escapeHtml(definition)}</p>
+      <p><strong>Example:</strong> ${escapeHtml(example || "")}</p>
+      <p><strong>Memory hint:</strong> ${escapeHtml(hint || "")}</p>
+    </article>`).join("")}</section>`;
+}
+
+/** Prepend two-digit line numbers to every <p> in a passage for SAT-style referencing. */
+function addLineNumbers(passageHtml: string): string {
+  let lineNum = 0;
+  return passageHtml.replace(/<p>/g, () => {
+    lineNum += 5;
+    return `<p><span class="line-num">${String(lineNum).padStart(2, "0")}</span>`;
+  });
+}
+
 function createSampleHtmlWorksheet(input: WorksheetInput, blueprint: LearningBlueprint, run = createWorksheetRun(input)): string {
   return assembleWorksheet(input, blueprint, {}, run);
 }
@@ -1574,26 +1890,29 @@ function responseSpaceClass(section: string, prompt: string, choices: string[]):
   return "write";
 }
 
-// Build the worksheet from the blueprint section plan. Any AI-authored pieces present
-// in `content` are used; everything else is filled from the deterministic banks, so the
-// worksheet is always complete and on-plan whether or not the AI calls succeeded.
+
 function assembleWorksheet(
   input: WorksheetInput,
   blueprint: LearningBlueprint,
   content: WorksheetContent,
   run = createWorksheetRun(input)
 ): string {
-  const theme = escapeHtml(input.interests.split(",")[0]?.trim() || "learning");
+  const rawTheme = input.interests.split(",")[0]?.trim() || "learning";
+  const theme = escapeHtml(rawTheme);
   const allInterests = escapeHtml(input.interests);
   const grade = escapeHtml(input.grade);
   const high = isHighSchoolOrAdult(input);
   const middle = !high && input.age >= 11;
-  const isSpaceTheme = !high && !middle && theme.toLowerCase().includes("space");
+  const isSpaceTheme = !high && !middle && rawTheme.toLowerCase().includes("space");
   const answerContext = { high, isSpace: isSpaceTheme, run };
+
+  // Dynamic format — adapt palette, layout, section order to this learner
+  const ageBand   = ageBandFor(input);
+  const palette   = interestPaletteFor(rawTheme);
   const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
+  const orderedSections = sectionOrderFor(plannedSections, rawTheme);
+
   const strategyBlock = strategyBlockFor(input, blueprint);
-  // Honor the reading-length slider from the editable plan in the deterministic path
-  // too, not just the AI path — otherwise the printed passage ignores the user's edit.
   const targetReadingWords = Math.max(
     60,
     Math.min(900, Math.round(blueprint.reading?.wordCount ?? qualityProfileFor(input).minReadingWords))
@@ -1601,11 +1920,8 @@ function assembleWorksheet(
   const passage = content.passageHtml
     ? content.passageHtml
     : fallbackPassageFor(input, theme, allInterests, run, targetReadingWords);
-  const rawTheme = input.interests.split(",")[0]?.trim() || "your topic";
   const history = isHistoryTheme(rawTheme);
   const bankVocab = bankVocabFor(high, middle, rawTheme);
-  // Use AI vocabulary when present, but top up from the bank so there are always enough
-  // cards (a thin AI vocab list otherwise leaves the worksheet with too few words).
   const minVocab = qualityProfileFor(input).minVocabularyCards;
   const vocabWords = content.vocab?.length ? [...content.vocab] : [...bankVocab];
   for (const bankWord of bankVocab) {
@@ -1615,10 +1931,8 @@ function assembleWorksheet(
     }
   }
 
-  // Theme-aware question banks, one per canonical subject.
   const banks = fallbackQuestionBanks({ high, middle, history, theme, vocabWords });
 
-  // Vocabulary questions are templated from the vocabulary words (AI or bank).
   const vocabQuestions: GeneratedQuestion[] = vocabWords.map(([word, definition, example]) => ({
     prompt: `Use ${word} in a precise sentence connected to ${theme}, then explain which clue helped you understand it.`,
     choices: [],
@@ -1635,66 +1949,41 @@ function assembleWorksheet(
   let runningNumber = 0;
   const fromBank = (subject: string, index: number): RenderQuestion => {
     const bank = banks[subject]?.length ? banks[subject] : banks["Critical Thinking"];
-    // Past the end of the bank, generate a seeded procedural question instead of
-    // repeating bank items verbatim — every question on the sheet stays unique.
     if (index >= bank.length) {
       const extra = overflowQuestionFor(subject, index - bank.length, theme, { high, middle, run });
       return {
-        section: subject,
-        number: runningNumber,
-        promptHtml: escapeHtml(extra.text),
-        choices: (extra.choices ?? []).map(escapeHtml),
-        answerHtml: escapeHtml(extra.answer),
-        explanationHtml: escapeHtml(extra.explanation),
+        section: subject, number: runningNumber,
+        promptHtml: escapeHtml(extra.text), choices: (extra.choices ?? []).map(escapeHtml),
+        answerHtml: escapeHtml(extra.answer), explanationHtml: escapeHtml(extra.explanation),
         hint: questionHintFor({ section: subject })
       };
     }
-    const fq: FallbackQuestion = {
-      section: subject,
-      text: bank[index],
-      number: runningNumber,
-      indexInSection: index
-    };
+    const fq: FallbackQuestion = { section: subject, text: bank[index], number: runningNumber, indexInSection: index };
     return {
-      section: subject,
-      number: runningNumber,
-      promptHtml: escapeHtml(fq.text),
-      choices: (mathChoicesFor(fq) ?? []).map(escapeHtml),
+      section: subject, number: runningNumber,
+      promptHtml: escapeHtml(fq.text), choices: (mathChoicesFor(fq) ?? []).map(escapeHtml),
       answerHtml: fallbackAnswerFor(fq, theme, answerContext),
       explanationHtml: fallbackExplanationFor(fq, theme, answerContext),
       hint: questionHintFor(fq)
     };
   };
   const fromAi = (subject: string, q: GeneratedQuestion): RenderQuestion => ({
-    section: subject,
-    number: runningNumber,
-    promptHtml: escapeHtml(q.prompt),
-    choices: q.choices.map(escapeHtml),
-    answerHtml: escapeHtml(q.correctAnswer),
-    explanationHtml: escapeHtml(q.explanation),
+    section: subject, number: runningNumber,
+    promptHtml: escapeHtml(q.prompt), choices: q.choices.map(escapeHtml),
+    answerHtml: escapeHtml(q.correctAnswer), explanationHtml: escapeHtml(q.explanation),
     hint: questionHintFor({ section: subject })
   });
 
-  // Build questions strictly from the blueprint section plan: each section gets exactly
-  // its planned count, AI-authored where available and bank-filled otherwise.
-  const builtSections = plannedSections.map((section) => {
+  const builtSections = orderedSections.map((section) => {
     const ai = aiQuestionsFor(section.subject);
-
-    // Reading is atomic: its questions and answers must match the passage that is shown,
-    // so we never mix AI reading questions with bank ones (which describe a different
-    // passage). The staged pipeline guarantees the AI passage and questions arrive together.
     if (section.subject === "Reading Comprehension" && ai && ai.length) {
-      const questions = ai.map((aiQuestion) => {
-        runningNumber += 1;
-        return fromAi(section.subject, aiQuestion);
-      });
+      const questions = ai.map((aiQ) => { runningNumber += 1; return fromAi(section.subject, aiQ); });
       return { subject: section.subject, questions };
     }
-
-    const questions = Array.from({ length: section.questionCount }, (_unused, index) => {
+    const questions = Array.from({ length: section.questionCount }, (_u, index) => {
       runningNumber += 1;
-      const aiQuestion = ai && ai[index];
-      return aiQuestion ? fromAi(section.subject, aiQuestion) : fromBank(section.subject, index);
+      const aiQ = ai && ai[index];
+      return aiQ ? fromAi(section.subject, aiQ) : fromBank(section.subject, index);
     });
     return { subject: section.subject, questions };
   });
