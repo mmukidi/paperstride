@@ -51,6 +51,68 @@ accounts or sending learner data to a paid external API.
 - Broad-interest deterministic passages now avoid the old generic "learner who
   enjoys..." opening and use longer grade-band mission variants for stronger
   reading-level fit
+- Art-aware Grade 9 through adult fallback generation now uses authentic visual
+  analysis, conservation, curation, composition, symbolism, exhibition math,
+  pigment science, and public-art context instead of inserting the word "Art"
+  into generic study-skills questions
+- Advanced Art answer keys include worked quantitative solutions and concrete
+  model responses for vocabulary, visual analysis, conservation science,
+  curatorial writing, logic, and critical thinking
+- A deterministic Grade 12 Art regression check blocks known quality failures
+  including broken theme grammar, incorrect learner-level references,
+  elementary algebra, generic answer placeholders, and missing art-domain content
+- Deterministic plans now use the learner's selected goal, available time, and
+  reported struggle areas: weak subjects receive extra guided practice,
+  catching-up plans use confidence-first scaffolding, getting-ahead plans use an
+  advanced profile, and quick sessions reduce overload
+- Motivation strategy now changes by developmental band: short varied success
+  loops for young learners, mission checkpoints for elementary learners,
+  autonomy and meaningful products for middle grades, and authentic disciplinary
+  decisions and trade-offs for older learners
+- The frontend now exposes Balanced, More Math, More Reading, Math Focus, and
+  Reading Focus choices instead of silently forcing every learner into a
+  balanced worksheet
+- Deterministic plans honor subject focus by changing the actual section mix and
+  question allocation; focused plans remove unrelated sections while preserving
+  a short context passage where useful
+- Printable response space now scales to the task: compact working space for
+  multiple choice, ruled short-response space, and extended space for writing,
+  argument, design, comparison, and critical-thinking prompts
+- Gaming, Coding, Robots, Minecraft, and Technology now have an advanced
+  domain pathway covering algorithms, debugging, latency, controlled usability
+  tests, optimization, robotics constraints, human factors, and product decisions
+- Sports interests now have an advanced pathway covering biomechanics,
+  periodized training, fatigue, recovery, performance variance, tactics,
+  controlled comparisons, athlete voice, and evidence-based coaching decisions
+- Music interests now have an advanced pathway covering rhythm, timbre, motifs,
+  dynamics, arrangement, acoustics, controlled listening tests, performance
+  interpretation, and production trade-offs
+- Cooking and Baking interests now have an advanced pathway covering food
+  chemistry, recipe ratios, sensory testing, allergen safety, cost, yield,
+  controlled prototypes, kitchen workflow, and waste reduction
+- Nature, Animals, Ocean Life, Ecology, and related interests now have an
+  advanced pathway covering biodiversity, indicator species, sampling design,
+  confounding variables, field evidence, ecological interventions, and
+  stakeholder trade-offs
+- Elementary Cooking and Nature worksheets now use concrete test-kitchen and
+  backyard-field-team stories with ordered directions, equal groups, tally
+  charts, safe observation, drawing, and hands-on final products
+- Unrecognized custom interests now pass through an interest-interpretation
+  layer instead of the old generic evidence-board fallback. The engine maps the
+  topic to an authentic design, collection, performance, systems, exploration,
+  or community lens and chooses a real role, audience, artifact, evidence type,
+  decision, and final product
+- Custom-interest grammar and math no longer insert the raw interest into
+  awkward sentence templates. Advanced custom worksheets now use audience
+  comprehension, weighted criteria, budgets, exceptions, constraints, and
+  revision decisions that work naturally for arbitrary topics
+- Quality regression checks now cover Grade 12 Art, Grade 10 Technology, a
+  Grade 11 Sports learner, Grade 12 Music, a Grade 6 catching-up learner with
+  Reading and Fractions needs, College Cooking, Grade 11 Nature, elementary
+  Cooking and Nature, custom Vintage Trains and Ballet interests, and an
+  advanced getting-ahead learner
+- Regression checks also verify Math Focus and Reading Focus subject mixes and
+  the task-aware printable response-space classes
 - AI passage generation now has a bounded quality attempt plus a fast repair
   attempt before using the deterministic passage bank, preventing long waits and
   reducing unnecessary fallback worksheets when Ollama returns short JSON

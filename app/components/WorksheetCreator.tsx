@@ -135,6 +135,14 @@ const TIME_OPTIONS = [
   { value: 60, emoji: "🏆", label: "Deep",     desc: "60+ min" },
 ];
 
+const SUBJECT_FOCUS_OPTIONS = [
+  { value: "balanced", emoji: "⚖️", label: "Balanced", desc: "Reading, math, and supporting subjects" },
+  { value: "more-math", emoji: "🔢", label: "More Math", desc: "Extra quantitative and logic practice" },
+  { value: "more-reading", emoji: "📚", label: "More Reading", desc: "Extra reading, vocabulary, and writing" },
+  { value: "math-only", emoji: "🧮", label: "Math Focus", desc: "Math and logic with a short context passage" },
+  { value: "reading-only", emoji: "✍️", label: "Reading Focus", desc: "Reading, vocabulary, and writing" },
+];
+
 const CHALLENGE_LEVELS = [
   { value: "gentle",   label: "Gentle"   },
   { value: "balanced", label: "Balanced" },
@@ -192,6 +200,7 @@ export default function WorksheetCreator() {
 
   // Needs
   const [strugglingWith, setStrugglingWith] = useState<string[]>([]);
+  const [subjectFocus,   setSubjectFocus]   = useState("balanced");
   const [goal,           setGoal]           = useState("general");
   const [timeAvailable,  setTimeAvailable]  = useState(40);
 
@@ -294,7 +303,7 @@ export default function WorksheetCreator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           childName: nickname, grade, age: Number(age), interests: allInterests,
-          strugglingWith, subjectFocus: "balanced", goal, timeAvailable,
+          strugglingWith, subjectFocus, goal, timeAvailable,
         }),
       });
       if (!res.ok) {
@@ -337,7 +346,7 @@ export default function WorksheetCreator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           childName: nickname, grade, age: Number(age), interests: allInterests,
-          strugglingWith, subjectFocus: "balanced", goal, timeAvailable,
+          strugglingWith, subjectFocus, goal, timeAvailable,
           blueprint: usePlan ? plan : null,
         }),
       });
@@ -465,6 +474,19 @@ export default function WorksheetCreator() {
                 <button key={opt.value} type="button"
                   className={`goal-card ${goal === opt.value ? "selected" : ""}`}
                   onClick={() => setGoal(opt.value)} aria-pressed={goal === opt.value}>
+                  <span className="goal-emoji">{opt.emoji}</span>
+                  <strong>{opt.label}</strong>
+                  <span className="goal-desc">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            <p className="form-section-sublabel" style={{ marginTop: "1.3rem" }}>What should this worksheet emphasize?</p>
+            <div className="goal-grid subject-focus-grid">
+              {SUBJECT_FOCUS_OPTIONS.map((opt) => (
+                <button key={opt.value} type="button"
+                  className={`goal-card ${subjectFocus === opt.value ? "selected" : ""}`}
+                  onClick={() => setSubjectFocus(opt.value)} aria-pressed={subjectFocus === opt.value}>
                   <span className="goal-emoji">{opt.emoji}</span>
                   <strong>{opt.label}</strong>
                   <span className="goal-desc">{opt.desc}</span>

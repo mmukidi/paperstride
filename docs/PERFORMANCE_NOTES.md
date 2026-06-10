@@ -79,6 +79,8 @@ model warmth and worksheet depth.
 
 - Add lightweight request timing logs for blueprint, section, fallback, and final
   assembly stages.
+- Continue adding domain-quality pathways for emerging custom interests while
+  preserving the no-latency deterministic fallback and its quality checks.
 - Keep `OLLAMA_KEEP_ALIVE=-1` as a valid env value; the app parses numeric env
   strings to numbers before calling Ollama so models stay resident without
   triggering duration parsing errors.

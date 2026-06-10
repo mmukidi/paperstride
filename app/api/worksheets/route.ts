@@ -97,6 +97,63 @@ function isMediaTheme(theme: string): boolean {
   return /\b(movie|movies|film|films|cinema|animation|animated|video|videos|screenplay|screenplays|director|directors|acting|actor|actors|theater|theatre|documentary|documentaries)\b/i.test(theme);
 }
 
+function isArtTheme(theme: string): boolean {
+  return /\b(art|artist|artists|drawing|painting|paintings|sketch|sketching|illustration|design|sculpture|sculpting|photography|museum|gallery|mural|murals|digital art|visual arts?)\b/i.test(theme);
+}
+
+function isTechnologyTheme(theme: string): boolean {
+  return /\b(technology|tech|coding|code|programming|computer|computers|robot|robots|robotics|gaming|game|games|minecraft|software|app|apps|engineering)\b/i.test(theme);
+}
+
+function isSportsTheme(theme: string): boolean {
+  return /\b(sport|sports|soccer|football|basketball|baseball|tennis|swimming|swim|running|track|volleyball|hockey|cricket|athlete|athletics)\b/i.test(theme);
+}
+
+function isMusicTheme(theme: string): boolean {
+  return /\b(music|musical|song|songs|singing|singer|piano|guitar|drums|violin|band|orchestra|hip hop|rap|jazz|classical|composer|production)\b/i.test(theme);
+}
+
+function isCookingTheme(theme: string): boolean {
+  return /\b(cooking|cook|baking|bake|food|chef|kitchen|recipe|recipes|restaurant|cake|bread|pastry|nutrition)\b/i.test(theme);
+}
+
+function isNatureTheme(theme: string): boolean {
+  return /\b(nature|animal|animals|wildlife|ocean|ocean life|forest|forests|plant|plants|garden|gardening|ecology|environment|climate|volcano|volcanoes|dinosaur|dinosaurs|astronomy|space)\b/i.test(theme);
+}
+
+type InterestLens = {
+  kind: "design" | "collection" | "performance" | "systems" | "exploration" | "community";
+  role: string;
+  artifact: string;
+  evidence: string;
+  action: string;
+  decision: string;
+};
+
+function interestLensFor(theme: string): InterestLens {
+  const value = theme.toLowerCase();
+  if (/\b(build|building|lego|craft|crafts|fashion|sewing|woodwork|model|models|architecture|design)\b/.test(value)) {
+    return { kind: "design", role: "design team", artifact: "prototype", evidence: "measurements and test notes", action: "build and improve", decision: "which design best meets the constraints" };
+  }
+  if (/\b(collect|collection|cards|stamps|coins|rocks|shells|memorabilia|antiques)\b/.test(value)) {
+    return { kind: "collection", role: "collection curator", artifact: "catalog", evidence: "labels, categories, and comparison records", action: "classify and explain", decision: "how the collection should be organized and interpreted" };
+  }
+  if (/\b(dance|dancing|ballet|theater|theatre|acting|magic|performance|performing)\b/.test(value)) {
+    return { kind: "performance", role: "performance company", artifact: "rehearsal plan", evidence: "timing, audience response, and rehearsal observations", action: "rehearse and refine", decision: "which choices make the performance clear and engaging" };
+  }
+  if (/\b(train|trains|car|cars|vehicle|vehicles|transport|maps|map|weather|business|market|markets)\b/.test(value)) {
+    return { kind: "systems", role: "systems team", artifact: "operating plan", evidence: "routes, patterns, costs, and performance records", action: "model and optimize", decision: "how the system should respond to competing needs" };
+  }
+  if (/\b(travel|adventure|explore|exploration|geography|countries|country|culture|cultures|language|languages)\b/.test(value)) {
+    return { kind: "exploration", role: "expedition team", artifact: "field guide", evidence: "maps, observations, sources, and comparisons", action: "investigate and document", decision: "which route or explanation is best supported" };
+  }
+  return { kind: "community", role: "project team", artifact: "community proposal", evidence: "interviews, observations, costs, and outcome measures", action: "investigate and improve", decision: "which proposal creates the strongest benefit with fair trade-offs" };
+}
+
+function themePhrase(theme: string): string {
+  return theme.trim().replace(/^(a|an|the)\s+/i, "") || "the topic";
+}
+
 type WorksheetRun = {
   seed: string;
   scenario: string;
@@ -1006,7 +1063,7 @@ function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
   const middle = !high && input.age >= 11 && input.age <= 14;
   const theme = input.interests.split(",")[0]?.trim() || "learning";
   const history = isHistoryTheme(theme);
-  const sections = defaultSectionPlan(input);
+  const sections = personalizeSectionPlan(defaultSectionPlan(input), input);
 
   return {
     curriculumPath: history ? "History and evidence-centered mixed practice" : "General standards-aligned mixed practice",
@@ -1034,9 +1091,14 @@ function defaultBlueprint(input: WorksheetInput): LearningBlueprint {
       "pattern recognition",
       "critical thinking"
     ],
-    motivationStrategy:
-      "Use the learner's interests as a mission theme, alternate quick wins with stretch questions, and include visible progress moments.",
-    challengeLevel: high || middle ? "stretch" : "balanced",
+    motivationStrategy: motivationStrategyFor(input),
+    challengeLevel: input.goal === "catching-up"
+      ? "gentle"
+      : input.goal === "getting-ahead"
+        ? "advanced"
+        : high || middle
+          ? "stretch"
+          : "balanced",
     visualPlan: ["small SVG line-art", "mission cards", "logic boxes", "pattern grids"],
     questionFormats: ["mission cards", "evidence hunt", "choose the best answer", "explain your thinking"],
     answerExpectations:
@@ -1197,6 +1259,125 @@ function defaultSectionPlan(input: WorksheetInput): WorksheetSection[] {
     { subject: "Logic and Patterns", questionCount: 1, skills: ["sequences", "abstract reasoning"], focus: "Decode a rule or pattern." },
     { subject: "Critical Thinking", questionCount: 1, skills: ["synthesis", "argument"], focus: "Connect interest to academic persistence." }
   ];
+}
+
+function subjectForStruggle(label: string): string | null {
+  const value = label.toLowerCase();
+  if (/read|sight word|vocabulary|critical reading/.test(value)) return "Reading Comprehension";
+  if (/letter|spelling|handwriting|grammar|writing|essay|note-taking/.test(value)) return "Grammar and Writing";
+  if (/count|addition|subtraction|fraction|multiplication|word problem|algebra|geometry|statistic|math/.test(value)) return "Math Reasoning";
+  if (/science/.test(value)) return "Science Investigation";
+  if (/logic/.test(value)) return "Logic and Patterns";
+  return null;
+}
+
+function personalizeSectionPlan(sections: WorksheetSection[], input: WorksheetInput): WorksheetSection[] {
+  const weakSubjects = new Set(
+    input.strugglingWith.map(subjectForStruggle).filter((subject): subject is string => Boolean(subject))
+  );
+  const catchingUp = input.goal === "catching-up";
+  const gettingAhead = input.goal === "getting-ahead";
+  const quick = input.timeAvailable === 20;
+
+  const focused = sections
+    .filter((section) => {
+      if (input.subjectFocus === "math-only") {
+        return ["Reading Comprehension", "Math Reasoning", "Logic and Patterns"].includes(section.subject);
+      }
+      if (input.subjectFocus === "reading-only") {
+        return ["Reading Comprehension", "Vocabulary in Context", "Grammar and Writing", "Critical Thinking"].includes(section.subject);
+      }
+      return true;
+    })
+    .map((section) => {
+    const weak = weakSubjects.has(section.subject);
+    let questionCount = section.questionCount;
+
+    if (weak && !quick) questionCount += 1;
+    if (input.subjectFocus === "more-math" && ["Math Reasoning", "Logic and Patterns"].includes(section.subject)) {
+      questionCount += 2;
+    }
+    if (input.subjectFocus === "more-reading" && ["Reading Comprehension", "Vocabulary in Context", "Grammar and Writing"].includes(section.subject)) {
+      questionCount += 1;
+    }
+    if (input.subjectFocus === "math-only") {
+      questionCount = section.subject === "Math Reasoning"
+        ? Math.max(questionCount, input.age >= 11 ? 8 : 6)
+        : section.subject === "Logic and Patterns"
+          ? Math.max(questionCount, 3)
+          : Math.min(questionCount, 2);
+    }
+    if (input.subjectFocus === "reading-only") {
+      questionCount = section.subject === "Reading Comprehension"
+        ? Math.max(questionCount, input.age >= 11 ? 7 : 5)
+        : Math.max(questionCount, 3);
+    }
+    if (gettingAhead && ["Reading Comprehension", "Math Reasoning", "Critical Thinking"].includes(section.subject)) {
+      questionCount += 1;
+    }
+    if (quick && questionCount > 2) questionCount -= 1;
+
+    const scaffolding = weak
+      ? catchingUp
+        ? " Begin with a confidence-building example, provide one concrete cue, and increase difficulty gradually."
+        : " Begin with an accessible question, then target this reported weak area with guided practice."
+      : "";
+
+    return {
+      ...section,
+      questionCount: Math.max(1, Math.min(10, questionCount)),
+      isWeakArea: weak,
+      focus: `${section.focus}${scaffolding}`,
+    };
+  });
+
+  if (input.subjectFocus === "more-math" && !focused.some((section) => section.subject === "Logic and Patterns")) {
+    focused.push({
+      subject: "Logic and Patterns",
+      questionCount: input.age >= 11 ? 3 : 2,
+      skills: ["logical reasoning", "patterns", "strategy"],
+      focus: "Extra logic practice supporting the selected math emphasis.",
+      isWeakArea: false,
+    });
+  }
+  if (input.subjectFocus === "more-reading" && !focused.some((section) => section.subject === "Grammar and Writing")) {
+    focused.push({
+      subject: "Grammar and Writing",
+      questionCount: 3,
+      skills: ["clear sentences", "revision", "evidence-based writing"],
+      focus: "Extra writing practice supporting the selected reading emphasis.",
+      isWeakArea: false,
+    });
+  }
+
+  return focused;
+}
+
+function motivationStrategyFor(input: WorksheetInput): string {
+  const interest = cleanText(input.interests.split(",")[0]?.trim() || "their interests", 80);
+  const needs = input.strugglingWith.length
+    ? `Give visible progress in ${input.strugglingWith.slice(0, 2).join(" and ")} without labeling the learner by weakness.`
+    : "Use early questions to create momentum before the deeper challenge.";
+
+  if (input.age <= 6) {
+    return `Turn ${interest} into a short story mission with choices, drawing, movement, and frequent success moments. Keep directions brief, praise effort and noticing, and change activity type before attention fades. ${needs}`;
+  }
+  if (input.age <= 10) {
+    return `Use ${interest} as an active mission with a clear goal, quick wins, playful puzzles, and visible checkpoints. Let the learner explain, draw, sort, or calculate instead of only writing. ${needs}`;
+  }
+  if (input.age <= 14) {
+    return `Frame ${interest} as a meaningful challenge with autonomy, real decisions, escalating difficulty, and a final product worth showing someone. Avoid childish language; use concise checkpoints and specific feedback. ${needs}`;
+  }
+
+  const goalMove = input.goal === "test-prep"
+    ? "Include test-like decisions, time-aware strategy, and realistic distractors without making the whole workbook feel like an exam."
+    : input.goal === "catching-up"
+      ? "Protect confidence with an accessible opening, explicit scaffolds, and evidence of improvement before introducing stretch work."
+      : input.goal === "getting-ahead"
+        ? "Offer authentic disciplinary problems, ambiguity, trade-offs, and opportunities to defend an original position."
+        : "Use authentic disciplinary problems, choice, and a clear reason each task matters beyond completing schoolwork.";
+
+  return `Treat ${interest} as a serious domain, not decoration. ${goalMove} Give the learner autonomy, precise success criteria, and a culminating challenge that produces something meaningful. ${needs}`;
 }
 
 // Match a free-text subject from the blueprint AI to one of the canonical subjects the
@@ -1386,6 +1567,13 @@ type RenderQuestion = {
   hint: string;
 };
 
+function responseSpaceClass(section: string, prompt: string, choices: string[]): string {
+  if (choices.length) return "write write--compact";
+  if (section === "Grammar and Writing" || section === "Critical Thinking") return "write write--extended";
+  if (/write|explain|design|recommend|compare|argument|paragraph|brief|label|plan/i.test(prompt)) return "write write--extended";
+  return "write";
+}
+
 // Build the worksheet from the blueprint section plan. Any AI-authored pieces present
 // in `content` are used; everything else is filled from the deterministic banks, so the
 // worksheet is always complete and on-plan whether or not the AI calls succeeded.
@@ -1431,11 +1619,11 @@ function assembleWorksheet(
   const banks = fallbackQuestionBanks({ high, middle, history, theme, vocabWords });
 
   // Vocabulary questions are templated from the vocabulary words (AI or bank).
-  const vocabQuestions: GeneratedQuestion[] = vocabWords.map(([word]) => ({
+  const vocabQuestions: GeneratedQuestion[] = vocabWords.map(([word, definition, example]) => ({
     prompt: `Use ${word} in a precise sentence connected to ${theme}, then explain which clue helped you understand it.`,
     choices: [],
-    correctAnswer: "A complete sentence that uses the vocabulary word correctly and connects it to the mission theme.",
-    explanation: "The sentence should prove the learner understands the word, not just copy it. A good sentence gives context clues."
+    correctAnswer: `Sample: ${example}`,
+    explanation: `The sentence demonstrates that "${word}" means ${definition}. Other answers are valid when their context makes the same meaning clear.`
   }));
 
   const aiQuestionsFor = (subject: string): GeneratedQuestion[] | undefined => {
@@ -1516,7 +1704,7 @@ function assembleWorksheet(
         <p class="label">Q${q.number} | ${escapeHtml(q.section)}</p>
         <h3>${q.promptHtml}</h3>
         ${q.choices.length ? `<p class="choice-line">${q.choices.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join(" &nbsp; ")}</p>` : ""}
-        <div class="write"></div>
+        <div class="${responseSpaceClass(q.section, q.promptHtml, q.choices)}"></div>
         <p class="hint">${escapeHtml(q.hint)}</p>
       </article>`;
   const questionSectionsHtml = builtSections
@@ -1576,7 +1764,9 @@ function assembleWorksheet(
   .passage { columns: 2 260px; column-gap: 18px; border:1px solid var(--line); padding:12px; background:#fff; }
   .label { color:var(--accent); font-size:12px; font-weight:700; text-transform:uppercase; }
   .section-head { margin:14px 0 6px; padding:4px 8px; background:var(--soft); border-left:3px solid var(--accent); font-size:15px; }
-  .write { min-height:44px; border-bottom:1px solid var(--ink); margin-top:8px; }
+  .write { min-height:58px; margin-top:8px; background:repeating-linear-gradient(to bottom, transparent 0, transparent 25px, #bdc7c3 26px); }
+  .write--compact { min-height:34px; }
+  .write--extended { min-height:104px; }
   .choice-line { font-size:13px; color:#303836; }
   .fun-card { background:var(--cool); }
   .puzzle-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:6px 0; }
@@ -1602,6 +1792,8 @@ function assembleWorksheet(
     .card, .answer, .hero, .vocab-card { border-color:#999; }
     svg { stroke:#333; }
     .passage { columns:2; }
+    .question { page-break-inside:avoid; }
+    .write { background:repeating-linear-gradient(to bottom, transparent 0, transparent 25px, #aaa 26px); }
   }
 </style>
 </head>
@@ -1711,6 +1903,78 @@ function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][]
       ["interpretation", "an evidence-based explanation of meaning", "A strong interpretation connects editing choices to the film's central claim.", "Interpretation = meaning with proof."],
       ["audience", "the viewers a film is made for or received by", "Audience data can show reaction, but not why a scene works.", "Audience = viewers."],
       ["claim", "a statement that can be supported with evidence", "A media claim needs scene evidence, not just personal taste.", "Claim = point to prove."]
+    ];
+  }
+  if (isArtTheme(theme) && high) {
+    return [
+      ["composition", "the arrangement of visual elements within an artwork", "The diagonal composition directs the viewer's eye toward the central figure.", "Composition = how the parts are arranged."],
+      ["contrast", "a strong difference between visual elements", "The artist uses contrast between light and shadow to create tension.", "Contrast = difference that stands out."],
+      ["symbolism", "the use of an image or object to represent a larger idea", "The broken chain functions as symbolism for freedom.", "Symbolism = image carrying an idea."],
+      ["provenance", "the documented history of an artwork's ownership and location", "The museum checked the painting's provenance before accepting the donation.", "Provenance = an artwork's paper trail."],
+      ["conservation", "the careful protection and stabilization of an artwork", "Conservation slowed the mural's deterioration without repainting the artist's work.", "Conservation = protect what remains."],
+      ["interpretation", "an evidence-based explanation of an artwork's meaning", "Her interpretation connected the empty chair to absence and memory.", "Interpretation = meaning supported by details."],
+      ["patronage", "financial or institutional support given to artists", "Public patronage shaped which murals appeared in the civic center.", "Patronage = support that funds art."],
+      ["contextualize", "to explain something using the conditions of its time and place", "To contextualize the poster, the class studied the protest movement that produced it.", "Context = the world around the work."]
+    ];
+  }
+  if (isTechnologyTheme(theme) && high) {
+    return [
+      ["algorithm", "a defined sequence of steps for solving a problem", "The team revised the pathfinding algorithm after it trapped characters in a loop.", "Algorithm = ordered problem-solving steps."],
+      ["iteration", "a repeated cycle of testing and improving", "Each iteration changed one feature and measured its effect on players.", "Iteration = test, learn, revise."],
+      ["latency", "the delay between an action and the system's response", "High latency made the controls feel unresponsive even when the graphics looked smooth.", "Latency = response delay."],
+      ["constraint", "a limit or requirement that shapes a solution", "Battery life was the most important constraint in the robot design.", "Constraint = a boundary the design must respect."],
+      ["optimization", "improving a system for a chosen goal", "Optimization for speed reduced visual detail, so the team had to define what mattered most.", "Optimize = improve toward a target."],
+      ["bias", "a systematic tendency that can produce unfair or distorted results", "The recommendation system showed bias because its training data excluded many users.", "Bias = a pattern that bends results."],
+      ["prototype", "an early version built to test an idea", "The clickable prototype revealed navigation problems before the team wrote the full app.", "Prototype = test version."],
+      ["trade-off", "a choice in which gaining one benefit requires giving up another", "Better graphics created a trade-off with battery life and loading speed.", "Trade-off = gain one thing, sacrifice another."]
+    ];
+  }
+  if (isSportsTheme(theme) && high) {
+    return [
+      ["periodization", "planning training in phases with different goals and loads", "The coach used periodization to balance endurance, strength, and recovery before competition.", "Periodization = training in planned phases."],
+      ["biomechanics", "the study of forces and movement in living bodies", "Biomechanics helped the swimmer change her start angle without increasing effort.", "Biomechanics = physics of movement."],
+      ["variance", "a measure of how spread out results are", "The athlete with the lower average had less variance and performed more consistently.", "Variance = how scattered the results are."],
+      ["recovery", "the process through which the body adapts after exertion", "Recovery improved when sleep and training load were monitored together.", "Recovery = rebuild after effort."],
+      ["correlation", "a relationship in which two measures change together", "The correlation between practice time and accuracy did not prove that extra practice caused the gain.", "Correlation = move together, not necessarily cause."],
+      ["strategy", "a coordinated plan for achieving a competitive goal", "The team changed strategy when the opponent began defending higher up the field.", "Strategy = overall plan."],
+      ["efficiency", "useful output produced for the effort or resources used", "Running efficiency improved even though top speed stayed the same.", "Efficiency = result per effort."],
+      ["sample size", "the number of observations included in a study", "A larger sample size would make the training conclusion more reliable.", "Sample size = how much evidence was measured."]
+    ];
+  }
+  if (isMusicTheme(theme) && high) {
+    return [
+      ["syncopation", "rhythmic emphasis placed where a listener does not normally expect it", "Syncopation made the groove feel unsettled and energetic.", "Syncopation = emphasis off the expected beat."],
+      ["timbre", "the sound quality that distinguishes instruments or voices", "Changing the timbre from strings to brass made the theme sound more forceful.", "Timbre = sound color."],
+      ["motif", "a short musical idea that returns and develops", "The composer transformed the four-note motif throughout the movement.", "Motif = recurring musical idea."],
+      ["dissonance", "tension created by notes that sound unstable together", "The unresolved dissonance delayed the feeling of arrival.", "Dissonance = musical tension."],
+      ["arrangement", "the way musical material is organized for particular performers or sounds", "The new arrangement moved the melody from piano to voice.", "Arrangement = how the music is assigned and organized."],
+      ["dynamics", "changes in loudness and intensity", "The sudden drop in dynamics made the final entrance more dramatic.", "Dynamics = loudness and intensity."],
+      ["sampling", "reusing a recorded sound within a new musical work", "The producer documented the sampling source before releasing the track.", "Sampling = recorded sound reused creatively."],
+      ["acoustics", "the science of how sound behaves in a space", "The hall's acoustics strengthened low frequencies but blurred fast passages.", "Acoustics = how a space shapes sound."]
+    ];
+  }
+  if (isCookingTheme(theme) && high) {
+    return [
+      ["emulsion", "a stable mixture of liquids that normally separate", "The chef formed an emulsion by slowly whisking oil into the acidic base.", "Emulsion = liquids held together."],
+      ["fermentation", "a process in which microorganisms transform sugars", "Fermentation produced gas that expanded the bread dough.", "Fermentation = microbes changing food."],
+      ["denaturation", "a change in a protein's structure caused by heat, acid, or agitation", "Heat caused protein denaturation as the egg changed from clear to firm.", "Denaturation = protein structure changes."],
+      ["caramelization", "browning caused when sugar breaks down under heat", "Caramelization added color and complex flavor to the onions.", "Caramelization = heated sugar browning."],
+      ["ratio", "a comparison between quantities", "The baker preserved the flour-to-water ratio when scaling the recipe.", "Ratio = quantities compared."],
+      ["yield", "the amount of food a recipe produces", "The revised recipe increased yield without changing portion size.", "Yield = total amount produced."],
+      ["sensory", "related to taste, smell, texture, sight, or sound", "The sensory panel rated aroma and texture separately.", "Sensory = detected by the senses."],
+      ["constraint", "a limit that shapes a possible solution", "Cost and allergy safety were both constraints in the menu design.", "Constraint = requirement or limit."]
+    ];
+  }
+  if (isNatureTheme(theme) && high) {
+    return [
+      ["biodiversity", "the variety of living organisms in an area", "Greater biodiversity can make an ecosystem more resilient to disturbance.", "Biodiversity = variety of life."],
+      ["indicator species", "a species whose condition reveals information about an ecosystem", "The stream insects served as indicator species for water quality.", "Indicator = living environmental signal."],
+      ["carrying capacity", "the largest population an environment can sustain over time", "Food scarcity lowered the habitat's carrying capacity.", "Carrying capacity = sustainable population limit."],
+      ["confounding variable", "an outside factor that may distort a tested relationship", "Rainfall was a confounding variable in the plant-growth comparison.", "Confounder = hidden alternative cause."],
+      ["resilience", "the ability of a system to recover after disturbance", "Wetland diversity increased resilience after the storm.", "Resilience = recover and continue."],
+      ["sampling", "selecting observations to represent a larger population", "Random sampling reduced the chance of studying only the easiest locations.", "Sampling = choose evidence from a larger whole."],
+      ["trophic", "related to feeding levels in an ecosystem", "The predator's decline affected several trophic levels.", "Trophic = position in a food web."],
+      ["anthropogenic", "caused by human activity", "The researchers separated anthropogenic pollution from natural sediment.", "Anthropogenic = human-caused."]
     ];
   }
   if (isBooksTheme(theme)) {
@@ -1902,6 +2166,21 @@ function highSchoolFallbackPassage(theme: string, run: WorksheetRun): string {
     ]);
   }
 
+  if (isArtTheme(theme)) {
+    return variantFromRun(run, "art-high", [
+      `<p><strong>Passage A:</strong> A city museum has acquired a large mural painted on removable panels in 1978. The work shows factory workers, neighborhood families, and a river divided by a bright red line. For decades it hung in a transit station, where sunlight faded the blue pigment and water damaged one corner. The museum must now decide whether to conserve the mural as it is, restore its original colors, or commission a contemporary artist to reinterpret the damaged section.</p>
+  <p>Each choice carries a different idea about authenticity. Conservation would stabilize the surface and preserve the visible marks of age. Restoration could make the original composition easier to read, but repainting may replace some of the artist's own brushwork. Reinterpretation could invite the present-day community into the work, yet it would also change an object with a specific history. The question is not simply which version looks best. It is which evidence and values should guide the decision.</p>
+  <p><strong>Passage B:</strong> The curatorial team studies the mural's composition before voting. Repeated vertical shapes connect workers to apartment towers, while the red diagonal interrupts that order and leads the eye toward the river. Some viewers interpret the line as industrial danger; others see it as a boundary between neighborhoods. Neither interpretation is automatically correct. A strong visual claim must point to color, placement, scale, repetition, or historical context and explain how that evidence supports the meaning.</p>
+  <p>The team also examines provenance and audience. Photographs show that the mural once faced a busy platform, so it was designed for viewers in motion rather than for silent museum study. Interviews reveal that older residents value the faded surface because it records the station's history. Younger artists argue that careful restoration would recover details their generation has never been able to see. Audience opinion matters, but popularity alone cannot settle a conservation question.</p>
+  <p>The museum finally proposes a limited treatment: stabilize the damaged panels, clean a small test area, and display digital reconstructions of several restoration options. This approach does not erase disagreement. Instead, it makes the disagreement visible and gives visitors evidence for forming their own judgment. The strongest curatorial decision is not necessarily the boldest one; it is the decision that states its purpose, documents its trade-offs, and remains accountable to both the artwork and its public.</p>`,
+      `<p><strong>Passage A:</strong> A student exhibition committee must choose one of three photographs for the entrance wall. Photograph A has dramatic lighting and immediately attracts attention. Photograph B uses a quieter composition in which empty space makes the single figure appear isolated. Photograph C documents a local protest and has the strongest historical significance, but its crowded frame is difficult to read from across the room.</p>
+  <p>The committee first argues from preference: one member calls A beautiful, another calls B emotional, and another says C is important. Their discussion improves only when they convert reactions into visual claims. They identify contrast, framing, scale, focal point, and symbolism. Once the evidence is named, disagreement becomes productive because each interpretation can be tested against something visible in the image.</p>
+  <p><strong>Passage B:</strong> Curating is also a form of argument. The entrance image tells visitors what kind of exhibition they are entering. Choosing A would emphasize spectacle. Choosing B would establish a reflective mood. Choosing C would frame the exhibition as civic testimony. None of those choices is neutral, and none can be justified by technical quality alone.</p>
+  <p>The committee then considers audience and context. Visitor surveys predict that A will attract the most attention, but surveys cannot measure which image will remain meaningful after a longer look. The protest photograph may require a caption explaining the event and the photographer's position. The isolated figure may invite multiple interpretations, which is valuable only if the surrounding works help visitors explore them.</p>
+  <p>In the final proposal, each student writes a curatorial statement that makes a claim, cites two visual details, acknowledges one limitation, and explains how the selected photograph supports the exhibition's purpose. This structure turns taste into analysis. Personal response still matters, but it becomes the beginning of inquiry rather than the end of the argument.</p>`
+    ]);
+  }
+
   if (isBooksTheme(theme)) {
     return variantFromRun(run, "books-high", [
       `<p><strong>Passage A:</strong> In ${escapeHtml(run.scenario)}, the hardest question is not which book is "best." The harder question is which kind of reading gives the strongest evidence for an interpretation. A print copy lets one student mark shifts in tone. An audiobook helps another hear irony in the narrator's voice. A graphic adaptation shows setting and gesture instantly, but it may leave out sentences that explain a character's motive. Each format changes what the reader notices.</p>
@@ -1932,11 +2211,88 @@ function highSchoolFallbackPassage(theme: string, run: WorksheetRun): string {
     ]);
   }
 
-  return `<p><strong>Passage A:</strong> In ${escapeHtml(run.scenario)}, students are asked to ${escapeHtml(run.angle)}. The assignment sounds simple until the group realizes that the first explanation is not always the best one. One student notices ${escapeHtml(run.detail)}. Another wants to move quickly and choose the answer that feels obvious. A third asks for proof that can be checked by someone else.</p>
-  <p>The group builds a small evidence board. They separate facts from guesses, label which details came from reading, and mark which numbers came from calculation. This process slows them down at first, but it prevents a common mistake: treating a confident answer as a correct answer. Confidence can help a learner begin; evidence helps the learner know whether the answer deserves to stay.</p>
-  <p><strong>Passage B:</strong> The same habit works across subjects. In reading, a student checks whether a claim is supported by the passage. In math, the student checks whether the units and operations match the situation. In science, the student asks what changed and what stayed the same. In writing, the student revises a sentence until the reason is clear. A Master's-level learner should also ask what kind of evidence is missing and what alternate explanation could still be true.</p>
-  <p>For a learner interested in ${theme}, the point is not to make every question sound the same. The point is to use the interest as a doorway into stronger thinking. Each new worksheet should feel like a new case: different details, different evidence, and a different reason to slow down before choosing an answer.</p>
-  <p>A strong response should do more than repeat the passage. It should state a precise claim, identify the detail that supports it, explain why that detail matters, and consider what would make the claim weaker. This is the difference between finishing a worksheet and practicing advanced reasoning.</p>`;
+  if (isTechnologyTheme(theme)) {
+    return variantFromRun(run, "technology-high", [
+      `<p><strong>Passage A:</strong> A student development team is building an educational game that teaches players to manage a virtual city during extreme weather. Early testers enjoy the graphics but stop playing after ten minutes. The team could add more rewards, simplify the simulation, or redesign the first mission. Before changing anything, however, they must decide what problem they are actually solving: confusion, boredom, difficulty, or slow system response.</p>
+  <p>The team studies session recordings and finds three patterns. Some players miss a small instruction near the edge of the screen. Others understand the goal but cannot tell why their city loses power. A third group makes correct decisions, yet high latency causes the game to respond after a noticeable delay. These failures look similar in the final score, but they require different solutions. Good debugging begins by separating symptoms from causes.</p>
+  <p><strong>Passage B:</strong> The developers design an experiment instead of changing several features at once. Half of the testers receive a clearer visual tutorial; the other half use the original version. Both groups play the same mission on identical devices. The team measures completion rate, error type, time on task, and whether players can explain the energy system afterward. Enjoyment matters, but learning evidence matters too.</p>
+  <p>The results introduce a trade-off. The visual tutorial raises completion from 58 percent to 81 percent, but it also makes the opening mission two minutes longer. Some developers want to optimize only for completion. Others argue that players should eventually make decisions without prompts. A responsible design choice therefore needs a defined goal: immediate accessibility, long-term mastery, replay value, or some balance among them.</p>
+  <p>The final proposal uses progressive support. New players receive the tutorial, prompts fade after successful decisions, and an optional challenge mode removes most guidance. This design treats difficulty as something to shape rather than simply raise or lower. Strong technology is not the version with the most features. It is the version whose algorithms, interface, and feedback serve a clear human purpose and whose effects can be tested with evidence.</p>`,
+      `<p><strong>Passage A:</strong> A robotics club is designing a small delivery robot for a school library. The robot must carry books, avoid people, fit through narrow aisles, and operate for an entire afternoon. The first prototype moves quickly but drains its battery in forty minutes. The second lasts longer but turns too slowly near shelves. Every improvement exposes a new constraint.</p>
+  <p>The students map the system before rebuilding it. Sensors collect distance data, an algorithm chooses a path, motors execute the movement, and feedback corrects errors. If the robot stops unexpectedly, the cause might be a sensor blind spot, a faulty threshold in the code, wheel friction, or a route that requires too many turns. Replacing parts without isolating the cause would be expensive guessing.</p>
+  <p><strong>Passage B:</strong> The team creates controlled trials with the same payload and route. It changes one variable at a time: speed, turning radius, or sensor range. The data reveal that reducing top speed by 12 percent increases operating time by 31 percent while adding only eighteen seconds to the route. Optimization now becomes a question of priorities rather than raw performance.</p>
+  <p>The club also considers human factors. A technically efficient robot can still fail if students cannot predict its movement or stop it safely. The final design adds a visible route signal, a physical stop button, and slower movement in crowded zones. These features do not make the robot more autonomous; they make its autonomy more understandable and accountable.</p>
+  <p>Engineering at this level is disciplined compromise. The team defines success, measures performance, documents trade-offs, and revises the prototype. A clever solution is useful only when it works under real constraints and when the people affected by it can understand and trust the result.</p>`
+    ]);
+  }
+
+  if (isSportsTheme(theme)) {
+    return variantFromRun(run, "sports-high", [
+      `<p><strong>Passage A:</strong> A school soccer team reaches the final month of its season with a problem: players are improving in practice but fading late in matches. The coach could add conditioning, reduce tactical work, or rotate more players. Each option seems reasonable, yet the team has only three weeks before the tournament. Training harder without identifying the cause could make the problem worse.</p>
+  <p>The performance staff compares several measures. Sprint speed remains stable, but high-intensity distance falls sharply after the seventieth minute. Players report heavier legs after weeks with two hard practices, and sleep logs show that recovery is lowest before away matches. Match results alone hide these patterns because a win can still include poor late-game movement.</p>
+  <p><strong>Passage B:</strong> The staff proposes a small periodization experiment. One group keeps the current schedule. Another replaces part of the second hard practice with lower-intensity tactical work and structured recovery. Both groups complete the same sprint and decision tests. The staff also records perceived effort, sleep, and late-session accuracy.</p>
+  <p>After two weeks, the adjusted group completes slightly less total training but maintains passing accuracy under fatigue and reports better recovery. The sample is small, so the result cannot prove the plan will work for every athlete. Still, the combined evidence is stronger than judging the program by effort alone. More work is not automatically better work.</p>
+  <p>The final decision preserves one high-intensity session, reduces unnecessary volume, and adds individual recovery targets. This is not an easier program. It is a more precise one. High-level performance grows when training stress, adaptation, tactics, confidence, and health are treated as one connected system rather than as competing priorities.</p>`,
+      `<p><strong>Passage A:</strong> Two swimmers have nearly identical average race times, but their coaches face different decisions. Swimmer A produces one exceptional race and several slower ones. Swimmer B rarely posts the fastest time but stays within a narrow range. For a relay final, should the coach choose the higher peak or the more reliable performance?</p>
+  <p>The answer depends on context. If the team needs an unusually fast split to medal, the higher ceiling may matter. If a disqualification or large slowdown would ruin the relay, consistency may be more valuable. An average alone cannot show this difference; the coach must examine variance, starts, turns, fatigue, and how each athlete performs under pressure.</p>
+  <p><strong>Passage B:</strong> Biomechanics data adds another layer. Swimmer A generates more force off the starting block but loses efficiency during the final lap. Swimmer B uses less force yet maintains stroke length. A coach who sees only the start might choose A. A coach who sees only the finish might choose B. Strong analysis connects each measurement to the actual demands of the race.</p>
+  <p>The athletes also deserve a role in the decision. Confidence, recent recovery, and relay order can change performance. These factors are difficult to measure, but ignoring them does not make the decision objective. It only hides assumptions inside the selection process.</p>
+  <p>A responsible recommendation therefore states the goal, compares multiple forms of evidence, and acknowledges uncertainty. Sport rewards action, but the best action is not guesswork. It is a decision whose reasoning remains clear even after the result is known.</p>`
+    ]);
+  }
+
+  if (isMusicTheme(theme)) {
+    return variantFromRun(run, "music-high", [
+      `<p><strong>Passage A:</strong> A student producer is arranging the same song for two performances: a small acoustic room and a large school auditorium. The melody and lyrics will not change, but almost every other choice might. A dense arrangement that feels rich through headphones could become muddy in a reverberant hall. A sparse arrangement might sound clear but fail to create enough energy for a large audience.</p>
+  <p>The producer begins with acoustics rather than taste. In the auditorium, low frequencies linger longer and fast rhythmic details blur near the back wall. The acoustic room absorbs more sound, making quiet changes in dynamics easier to hear. These conditions do not determine the arrangement, but they create constraints the musicians should understand.</p>
+  <p><strong>Passage B:</strong> The group tests two versions. Version A layers guitar, piano, percussion, and backing vocals through most of the song. Version B saves several instruments for the final section and leaves more space around the vocal. Listeners in the auditorium rate Version B as clearer, even though some prefer the excitement of Version A. Preference and intelligibility are related, but they are not identical.</p>
+  <p>The producer also develops a four-note motif that returns in different timbres. On piano it sounds reflective; on distorted guitar it becomes urgent. The notes remain the same, yet arrangement changes their meaning. This is why musical analysis must name what is heard: rhythm, dynamics, register, instrumentation, harmony, and form.</p>
+  <p>The final performance uses the spacious arrangement in the auditorium and the denser version in the smaller room. The solution is not a compromise between good and bad music. It is evidence that creative decisions become stronger when artistic intention, performer ability, audience experience, and physical sound are considered together.</p>`,
+      `<p><strong>Passage A:</strong> A school ensemble is preparing a new piece built around syncopated rhythm and a repeating motif. The first rehearsal is accurate but lifeless. Every note occurs at the correct time, yet the groove feels heavy and the motif disappears inside the accompaniment. The conductor must decide whether the problem comes from tempo, dynamics, articulation, balance, or the players' understanding of the phrase.</p>
+  <p>The ensemble records three short trials. In the first, they increase tempo. Energy improves, but precision falls. In the second, they keep the original tempo and reduce the accompaniment's volume. The motif becomes clearer. In the third, players accent every written syncopation, producing so much emphasis that the rhythm loses direction.</p>
+  <p><strong>Passage B:</strong> These trials show why correct execution is not the same as interpretation. Musical notation gives essential instructions, but performers still shape hierarchy: which note leads, where tension grows, and when a phrase releases. Dynamics and articulation guide attention in much the same way that composition guides the eye in visual art.</p>
+  <p>The conductor asks each section to explain its role. The bass line stabilizes the pulse, percussion creates forward motion, and upper instruments pass the motif between contrasting timbres. Once the musicians understand those relationships, they no longer need to make every entrance equally strong.</p>
+  <p>The final rehearsal is not louder or faster overall. It is more intentional. The motif remains audible, syncopation creates lift rather than confusion, and dissonance resolves with greater impact. Enthusiasm matters, but disciplined listening turns enthusiasm into a performance the audience can actually follow.</p>`
+    ]);
+  }
+
+  if (isCookingTheme(theme)) {
+    return variantFromRun(run, "cooking-high", [
+      `<p><strong>Passage A:</strong> A student culinary team must redesign a popular muffin recipe for a school event. The original is moist and flavorful, but it contains a common allergen, costs too much per serving, and becomes dry after several hours. The team could replace ingredients one at a time, but substitutions affect chemistry as well as taste. Removing eggs changes protein structure and emulsification; reducing sugar changes sweetness, browning, and moisture retention.</p>
+  <p>The team defines success before testing: no target allergen, cost below ninety cents per serving, acceptable texture after four hours, and a sensory rating close to the original. These criteria prevent the group from declaring success simply because one batch tastes good immediately after baking.</p>
+  <p><strong>Passage B:</strong> Three prototypes isolate different changes. Batch A uses a seed gel as a binder. Batch B uses fruit puree. Batch C combines a smaller amount of both. All batches keep flour mass, oven temperature, mixing time, and portion size constant. Tasters rate tenderness, flavor, appearance, and aftertaste without knowing which version they receive.</p>
+  <p>Batch B receives the highest flavor score but has a gummy center. Batch A has the best structure but dries quickly. Batch C scores slightly below B in flavor while maintaining texture and meeting the cost target. The best recipe is therefore not the highest score in one category. It is the version that satisfies the full design problem.</p>
+  <p>The final recipe documents ingredient ratios by mass rather than only by cups, because mass scales more reliably. It also records uncertainty: a different fruit puree, flour protein level, or oven could change the result. Culinary creativity becomes more powerful when sensory judgment, food science, measurement, safety, and audience needs work together.</p>`,
+      `<p><strong>Passage A:</strong> A neighborhood café wants to reduce food waste without shrinking its menu. Staff members believe the largest problem is unsold bread, but a one-week audit shows that preparation scraps and oversized portions contribute nearly as much. The café must decide whether to change purchasing, recipes, portion sizes, or how ingredients are reused.</p>
+  <p>The team separates edible surplus from unavoidable waste. Vegetable stems can become stock, day-old bread can become crumbs or pudding, and bruised fruit may still work in cooked sauces. Food-safety limits remain non-negotiable; creative reuse cannot justify unsafe storage or cross-contamination.</p>
+  <p><strong>Passage B:</strong> The café tests a redesigned lunch special using overlapping ingredients. The change lowers purchasing cost and waste mass, but preparation takes longer. Customer ratings stay stable, while staff report that the new workflow becomes easier after several days. A single day's labor data would therefore exaggerate the long-term cost.</p>
+  <p>The team also studies portions. Plates returning with similar leftovers suggest that the standard serving may exceed what many customers want. Offering two portion sizes could reduce waste, but prices must remain fair and the smaller option should not feel like a penalty.</p>
+  <p>The final proposal combines better forecasting, flexible portions, safe ingredient reuse, and a weekly waste log. Sustainability is not one clever recipe. It is a system in which purchasing, preparation, service, safety, cost, and customer experience are measured together.</p>`
+    ]);
+  }
+
+  if (isNatureTheme(theme)) {
+    return variantFromRun(run, "nature-high", [
+      `<p><strong>Passage A:</strong> A student ecology team is studying why a local stream supports fewer aquatic insects than it did five years ago. One explanation points to warmer water. Another blames sediment after construction upstream. A third suggests that sampling has changed: earlier teams collected from shaded riffles, while the current team sampled easier-to-reach pools.</p>
+  <p>The students cannot test every explanation at once. They create a sampling plan covering shaded and exposed sites, riffles and pools, and locations above and below the construction area. At each site they measure temperature, dissolved oxygen, turbidity, flow, and indicator species. Randomized site selection reduces the temptation to choose locations that confirm the team's expectation.</p>
+  <p><strong>Passage B:</strong> The data show lower insect diversity where turbidity is high, but warm exposed pools also have low dissolved oxygen. These variables overlap, so correlation alone cannot identify one cause. Sediment may cover habitat, temperature may reduce oxygen, and slower water may influence both.</p>
+  <p>The team compares observations after rainfall and during dry weather. Turbidity changes sharply below construction after rain, while upstream sites remain more stable. This strengthens the sediment explanation, but the students still avoid claiming it explains every decline. Long-term warming and habitat differences remain plausible contributors.</p>
+  <p>The final report recommends erosion controls, restored streamside shade, and repeated monitoring across seasons. The goal is not to produce a simple villain. It is to identify actions supported by evidence while stating what remains uncertain. Ecological systems are connected; responsible conclusions must be precise enough to guide action without pretending complexity has disappeared.</p>`,
+      `<p><strong>Passage A:</strong> A coastal reserve is considering whether to close part of a beach during nesting season. The closure could protect wildlife, but it would also limit recreation and affect nearby businesses. Managers need more than a count of nests; they need evidence about disturbance, habitat quality, visitor patterns, and which protections actually work.</p>
+  <p>Researchers divide the beach into comparable zones. Some receive clear signs and marked paths, some use volunteer guides, and a small protected zone limits access during peak nesting hours. Cameras and field observations record nesting success, predator activity, visitor compliance, and accidental disturbance without identifying individual visitors.</p>
+  <p><strong>Passage B:</strong> Early results show that signs improve compliance where paths are obvious but have little effect near popular viewpoints. Guided areas produce fewer disturbances, although staffing costs are higher. The limited closure protects nests most effectively, but its social cost is also greatest.</p>
+  <p>A strong management decision must therefore define the goal. If zero disturbance is required, broad closure may be justified. If the goal is substantial protection with continued access, a combination of targeted closure, guides, and redesigned paths may perform better. The correct choice depends on values as well as biological evidence.</p>
+  <p>The reserve chooses an adaptive plan: begin with targeted protections, publish the measures, and expand restrictions if nesting success falls below a stated threshold. This approach treats policy as a testable decision. Nature protection becomes more credible when goals, evidence, trade-offs, and revision rules are visible to everyone affected.</p>`
+    ]);
+  }
+
+  const lens = interestLensFor(theme);
+  const topic = escapeHtml(themePhrase(theme));
+  return `<p><strong>Passage A:</strong> A ${escapeHtml(lens.role)} receives a real assignment connected to ${topic}: create a ${escapeHtml(lens.artifact)} that another person could understand and use. The team cannot succeed by repeating facts or decorating a generic school task with the topic's name. It must decide ${escapeHtml(lens.decision)}.</p>
+  <p>The team begins by defining success. It identifies the intended audience, the constraints, and the evidence that would distinguish a strong result from an attractive but weak one. For this project, useful evidence includes ${escapeHtml(lens.evidence)}. Each measure captures part of the problem, but no single number or opinion can settle the decision alone.</p>
+  <p><strong>Passage B:</strong> The first draft exposes a trade-off. One option is easier to understand but leaves out important complexity. Another is more complete but asks too much of the audience. A third is memorable but difficult to verify. The team compares the options against the same criteria instead of changing the standard after seeing which result it prefers.</p>
+  <p>Iteration turns interest into disciplined work. The team uses the evidence to ${escapeHtml(lens.action)}, records what changed, and checks whether the revision solved the original problem or merely created a new one. It also invites a skeptical review: What assumption is hidden? Whose perspective is missing? What result would make the team reverse its choice?</p>
+  <p>The final ${escapeHtml(lens.artifact)} includes both a recommendation and its limits. This is what advanced work with ${topic} looks like: authentic decisions, precise evidence, thoughtful trade-offs, and a product made for someone beyond the person completing the worksheet.</p>`;
 }
 
 function middleSchoolFallbackPassage(theme: string, interests: string, run: WorksheetRun): string {
@@ -1962,16 +2318,11 @@ function middleSchoolFallbackPassage(theme: string, interests: string, run: Work
     ]);
   }
 
-  return variantFromRun(run, "broad-middle", [
-    `<p>At the start of ${escapeHtml(run.scenario)}, the team thinks the task will be easy: collect a few clues about ${theme}, choose the best answer, and move on. Then one student notices ${escapeHtml(run.detail)} and realizes the first answer may be only a guess. The group decides to slow down and treat the topic like an investigation.</p>
-  <p>Consider how someone exploring ${theme} actually works. They begin by observing carefully and writing down what they see, separating what is certain from what is only a guess. Then they look for relationships: when one thing increases, does another rise or fall? Does a result repeat, or was it luck? Because this learner is also interested in ${interests}, they start to notice that ideas from one field can explain another: how forces move objects, how stories shape memory, and how numbers reveal what the eye alone would miss. Connections like these make ${theme} far richer than any single fact about it.</p>
-  <p>Progress in ${theme} rarely comes from getting everything right the first time. It comes from testing an idea, watching it fall short in some small way, and asking exactly what went wrong. A measurement might be off, a step might be skipped, or a hidden assumption might be wrong. Each correction is a clue, and clues add up. Over weeks and months, a beginner who keeps asking precise questions can come to understand ${theme} more deeply than someone who only memorized facts about it.</p>
-  <p>That is why ${theme} is such good training for the mind. To explain a result, a person has to read carefully, reason with numbers, and put their thinking into clear words. To defend a conclusion, they have to point to real evidence instead of a feeling. The very habits that make someone good at ${theme} are the same habits that make someone a strong reader, a careful thinker, and a confident problem solver in every subject they meet.</p>`,
-    `<p>The class opens a challenge file called "${escapeHtml(run.angle)}." The file is built around ${theme}, but it also includes notes about ${escapeHtml(interests)}. At first, the evidence looks messy: one clue is a number, one clue is a sentence, and one clue is an observation from ${escapeHtml(run.detail)}. The students have to decide which clue is strongest.</p>
-  <p>A careful reader does not grab the first exciting detail. The reader asks what the passage actually says, which words carry the most meaning, and whether the evidence supports the claim. A careful mathematician does something similar. The mathematician checks the units, compares quantities, and asks whether the pattern continues.</p>
-  <p>The group learns that ${theme} can connect different kinds of thinking. A sports score can become a ratio problem. A game design can become a sequence. A story about a team can become a reading-comprehension task. The topic is interesting, but the skill is deeper: use evidence, explain the reason, and revise when the first answer is weak.</p>
-  <p>By the end, the students write a stronger conclusion than they had at the beginning. They do not say, "This is right because it feels right." They say, "This is right because the passage gives this clue, the numbers show this pattern, and the explanation fits both." That sentence shows real academic confidence.</p>`
-  ]);
+  const lens = interestLensFor(theme);
+  return `<p>A ${escapeHtml(lens.role)} receives a challenge connected to ${escapeHtml(themePhrase(theme))}: make a ${escapeHtml(lens.artifact)} for another student. The team first asks what the audience needs and what would make the result accurate, useful, and interesting.</p>
+  <p>The first version has a problem. One part is exciting but unclear, while another part is accurate but hard to use. The team gathers ${escapeHtml(lens.evidence)}, compares the choices, and decides ${escapeHtml(lens.decision)}.</p>
+  <p>Instead of changing everything, the team revises one feature and checks the result. This makes it easier to explain what helped. The students also name one limitation so the final claim does not sound stronger than the evidence.</p>
+  <p>By the end, the team can ${escapeHtml(lens.action)} with purpose. Their ${escapeHtml(lens.artifact)} does more than display facts about ${escapeHtml(themePhrase(theme))}; it helps a real person understand, choose, or do something.</p>`;
 }
 
 function elementaryFallbackPassage(theme: string, interests: string, run: WorksheetRun): string {
@@ -1997,6 +2348,20 @@ function elementaryFallbackPassage(theme: string, interests: string, run: Worksh
     ]);
   }
 
+  if (isCookingTheme(theme)) {
+    return `<p>Mia's class opens a tiny test kitchen. Their mission is to make enough fruit cups for twelve students. First, they read the recipe card and circle the action words: wash, measure, mix, and share. The teacher reminds them that good cooks read every step before they begin.</p>
+  <p>The class has 24 strawberry pieces, 12 banana slices, and 36 blueberries. They want every cup to be the same. The students count, make equal groups, and check that no cup receives all the berries. Fair portions are a math problem and a teamwork problem.</p>
+  <p>Next, the class compares two apple slices. One has lemon juice and one does not. After ten minutes, the plain slice turns browner. The students do not taste the test slices. They observe color, record what changed, and learn that kitchen science needs safe rules.</p>
+  <p>At the end, each learner designs a recipe card with a title, three ordered steps, and one helpful picture. The mission feels like cooking, but it also practices reading directions, equal groups, observation, and clear writing.</p>`;
+  }
+
+  if (isNatureTheme(theme)) {
+    return `<p>Leo's class becomes a backyard field team. Each pair receives a small observation square and a mission: find living and nonliving things without pulling, chasing, or harming anything. The students look closely at leaves, soil, stones, insects, and shadows.</p>
+  <p>They make a tally chart. One square has 7 clover leaves, 3 ants, and 2 small stones. Another square has 4 clover leaves, 1 ant, and 6 stones. The class compares the numbers and asks why the places might be different.</p>
+  <p>The students notice that the first square is shady and damp, while the second is sunny and dry. That clue may explain part of the pattern, but one observation is not enough. The class decides to check two more squares before making a conclusion.</p>
+  <p>At the end, each learner draws one thing they observed, labels two details, and writes one question. The goal is not to collect nature. The goal is to notice carefully, count fairly, and leave the habitat as they found it.</p>`;
+  }
+
   if (theme.toLowerCase().includes("space")) {
     const hasSoccer = interests.toLowerCase().includes("soccer");
     const designParagraph = hasSoccer
@@ -2009,18 +2374,11 @@ function elementaryFallbackPassage(theme: string, interests: string, run: Worksh
     <p>At the end of the mission, the learner writes a short conclusion: reading gave the team facts, ${conclusionDetail} gave the team design ideas, and math helped the team compare results. The rover did not work perfectly, but each test taught the team what to try next. That is why a mistake can be useful. It points the learner toward the next smart step.</p>`;
   }
 
-  return variantFromRun(run, "broad-elementary", [
-    `<p>The class begins ${escapeHtml(run.scenario)} with a question: how can ${theme} help everyone practice better thinking? One student studies ${escapeHtml(run.detail)}. Another student writes down facts from the reading. A third student checks the numbers on the chart. The teacher reminds the group that a strong answer needs evidence, not just a quick guess.</p>
-  <p>The team decides to build a small test. First, they make a plan with three steps. Next, they try the plan and record what happens. Last, they compare the result with the first idea. The first test is not perfect. That is useful, because mistakes can show what to fix. If the notes are clear, the team can see what changed and what stayed the same.</p>
-  <p>Because the learner also mentioned ${escapeHtml(interests)}, the challenge connects more than one subject. A sports example can help the class compare scores and time. A Minecraft example can help the class think about design, resources, and patterns. A reading clue can explain why one choice is stronger than another. Each subject gives the team a different tool.</p>
-  <p>Math helps the team explain the test. If one round takes 12 minutes and another takes 18 minutes, the team can find the difference. If a pattern grows by the same amount each time, the team can predict the next number. Reading helps too, because the passage tells which details are facts and which details are guesses.</p>
-  <p>At the end, each student writes one clear conclusion. The conclusion names the best clue, uses one number, and explains the reason in a complete sentence. The goal is not to be perfect right away. The goal is to notice clues, explain thinking, and choose the next smart step.</p>`,
-    `<p>A classroom team receives a mission board about ${theme}. The board includes a short passage, a number chart, and a set of clue cards. The clue cards mention ${escapeHtml(run.detail)}, so the students must look closely before they answer. One card is exciting but not very useful. Another card is quiet, but it gives the clearest proof.</p>
-  <p>The first job is reading. The students underline the main idea and circle two details that support it. They also mark one word that is new or tricky. When a student wants to guess, a partner asks, "Which sentence proves it?" That question helps the group slow down and use the passage.</p>
-  <p>The second job is math. The team compares two results from the mission board. One result is larger, but the larger number is not always the better result. The students have to read the labels, check the units, and explain what the numbers mean. Careful math is not just calculating. It is understanding the situation.</p>
-  <p>The final job is writing. Each student writes a short answer about ${theme} and includes one detail from the passage. Since the learner also likes ${escapeHtml(interests)}, the example can connect to games, sports, teamwork, design, or practice. The interest makes the work feel familiar, but the thinking still has to be strong.</p>
-  <p>By the end of the mission, the class has a useful rule: read the evidence, check the numbers, then explain the reason. That rule works for ${theme}, and it works for many other school subjects too.</p>`
-  ]);
+  const lens = interestLensFor(theme);
+  return `<p>The class gets a mission about ${escapeHtml(themePhrase(theme))}. They will make a small ${escapeHtml(lens.artifact)} for another class. First, they read the mission card and circle the goal. Then they choose jobs: reader, counter, maker, and checker.</p>
+  <p>The team has two ideas. One looks exciting but misses an important detail. The other is clear but needs more color, examples, or action. The students use ${escapeHtml(lens.evidence)} to choose what to keep and what to improve.</p>
+  <p>They count the materials, put the steps in order, and test one part. When something does not work, the checker does not say, "Wrong." The checker asks, "What clue can help us fix it?" That keeps the mission calm and moving.</p>
+  <p>At the end, the class shares the ${escapeHtml(lens.artifact)} and names one thing it helps someone do. The learners practiced reading, math, teamwork, and explanation while working with something they genuinely care about.</p>`;
 }
 
 type AnswerContext = { high: boolean; isSpace: boolean; run: WorksheetRun };
@@ -2055,6 +2413,10 @@ function fallbackAnswerFor(question: FallbackQuestion, theme: string, ctx: Answe
 
   if (question.section === "Social Studies and History") {
     return escapeHtml(socialAnswerFor(question.text));
+  }
+
+  if (question.section === "Critical Thinking") {
+    return escapeHtml(criticalThinkingAnswerFor(question.text));
   }
 
   return "Open response. A strong answer states a claim, gives a reason, and supports it with evidence or numbers.";
@@ -2111,6 +2473,100 @@ function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): str
     return answers[index] || "Use a specific source from the passage and explain how it supports or limits the historical claim.";
   }
 
+  if (isCookingTheme(theme) && ctx.high) {
+    const answers = [
+      "The central problem is how to redesign a food product or kitchen system that satisfies safety, chemistry, sensory quality, cost, workflow, and audience needs together.",
+      "Several criteria prevent the team from declaring success based on one attractive result such as immediate taste, low cost, or reduced waste.",
+      "Changing one variable while controlling the rest makes differences more attributable to the substitution or process being tested.",
+      "The highest flavor score may fail texture, safety, stability, cost, or workflow requirements; the cheapest option may not satisfy users or the design brief.",
+      "The final choice is supported by balanced sensory scores, stable texture, target cost, reduced waste, or workflow evidence rather than one isolated measure.",
+      "Rigorous culinary creativity combines sensory judgment with food science, controlled testing, accurate scaling, safety, resource use, and honest documentation."
+    ];
+    return answers[index] || "Use a specific recipe, sensory, cost, or workflow detail from the passage and explain how it supports the choice.";
+  }
+  if (isCookingTheme(theme)) {
+    const answers = [
+      "The main idea is that the class uses cooking to practice reading directions, equal sharing, safe observation, and clear writing.",
+      "A strong detail is that the students circle the recipe action words before they begin or divide the fruit into equal cups.",
+      "A recipe is a set of ingredients and ordered directions for making food.",
+      "The students should count each fruit type and divide it equally so every cup is fair.",
+      "First they read the recipe, next they make equal fruit cups and observe apples, and last they design a recipe card.",
+      "Open response. A useful question could ask why lemon slows browning or how many fruit pieces belong in each cup."
+    ];
+    return answers[index] || "Use a detail from the test-kitchen passage and explain your answer.";
+  }
+
+  if (isNatureTheme(theme) && ctx.high) {
+    const answers = [
+      "The central problem is how to identify likely ecological causes and choose an intervention while balancing uncertainty, connected variables, biological goals, and human consequences.",
+      "One observation cannot isolate cause because sampling location, temperature, flow, rainfall, habitat, disturbance, and other variables may overlap.",
+      "The plan samples comparable conditions, includes reference sites, repeats observations, and measures several variables, reducing selection bias and improving causal reasoning.",
+      "Environmental variables interact, while management choices also trade protection against access, cost, livelihoods, and community trust.",
+      "The recommendation is supported by repeated spatial or weather-linked patterns and uses thresholds or monitoring so the intervention can be revised.",
+      "Responsible action uses the strongest available evidence, states uncertainty, makes goals and trade-offs visible, and commits to monitoring and adaptation."
+    ];
+    return answers[index] || "Use a specific field observation or management detail from the passage and explain how it supports the recommendation.";
+  }
+  if (isNatureTheme(theme)) {
+    const answers = [
+      "The main idea is that careful nature study means observing, counting, comparing habitats, asking questions, and leaving living things unharmed.",
+      "A strong detail is that the class uses tally charts and checks more observation squares before making a conclusion.",
+      "A habitat is the place where a living thing finds what it needs.",
+      "The shady, damp square may support more clover and ants, but the class needs more observations before deciding.",
+      "First the students observe without harming anything, next they count and compare two squares, and last they plan more checks and draw what they found.",
+      "Open response. A useful question could ask how sunlight, water, soil, or season changes what lives in each square."
+    ];
+    return answers[index] || "Use a detail from the field-team passage and explain your answer.";
+  }
+
+  if (isSportsTheme(theme) && ctx.high) {
+    const answers = [
+      "The central decision is how to improve or select performance by balancing peak output, consistency, fatigue, recovery, tactics, and the demands of the competition.",
+      "Wins and averages compress different performance patterns. They can hide late-game decline, variance, opponent strength, fatigue, or how the result was produced.",
+      "The comparison changes one meaningful factor, holds key conditions steady, and measures several outcomes, making causal claims more defensible.",
+      "The coach must weigh short-term output against consistency, recovery, injury risk, tactical fit, and the possibility that a smaller training load produces better adaptation.",
+      "The recommendation is supported by maintained accuracy under fatigue, improved recovery, or a performance profile that better matches the event's actual demands.",
+      "Responsible analysis defines the goal, uses multiple measures, includes athlete context, acknowledges uncertainty, and keeps the reasoning clear regardless of the final result."
+    ];
+    return answers[index] || "Use a specific performance measure from the passage and explain why it matters to the decision.";
+  }
+
+  if (isMusicTheme(theme) && ctx.high) {
+    const answers = [
+      "The central decision is how to shape an arrangement or performance so musical intention remains clear under the acoustic, technical, and expressive conditions of the performance.",
+      "Acoustics and balance determine which frequencies, rhythms, voices, and motifs remain distinct; the same notes can be perceived differently in another room or texture.",
+      "Accuracy reproduces the written notes, while interpretation establishes hierarchy, direction, tension, release, and meaning through dynamics, articulation, balance, and timbre.",
+      "The passage weighs energy against clarity, density against space, speed against precision, and individual prominence against the coherence of the whole.",
+      "The final choice is supported by clearer listener perception, a more audible motif, controlled syncopation, or instrumentation adapted to the performance space.",
+      "The conclusion argues that creative intention becomes stronger when artists test how specific musical choices affect performers, listeners, and the physical sound."
+    ];
+    return answers[index] || "Use a specific musical or acoustic detail from the passage and explain how it supports the interpretation.";
+  }
+
+  if (isTechnologyTheme(theme) && ctx.high) {
+    const answers = [
+      "The central problem is how to identify the actual cause of poor performance and choose a design that balances accessibility, learning, speed, reliability, and human needs.",
+      "A symptom such as a low score or stopped robot can come from different causes. Separating causes prevents the team from changing the wrong feature or component.",
+      "The experiment changes one feature while holding conditions steady and measures several outcomes, making the evidence more useful for judging causation.",
+      "The design with the best immediate completion or speed may weaken long-term mastery, battery life, safety, clarity, or another goal the team values.",
+      "The evidence supports progressive support or compromise because performance improves while guidance can fade, or because a modest speed cost produces a much larger battery and safety benefit.",
+      "Responsible technology defines a human purpose, tests effects with evidence, documents trade-offs, and makes automated behavior understandable and accountable."
+    ];
+    return answers[index] || "Use a specific design detail or data point from the passage and explain how it supports the conclusion.";
+  }
+
+  if (isArtTheme(theme) && ctx.high) {
+    const answers = [
+      "The central problem is how to make a responsible conservation or curatorial decision when authenticity, visual impact, historical context, and community interests point toward different choices.",
+      "Sample: the red diagonal interrupts the repeated vertical forms and directs attention toward the river; this supports an interpretation of the line as a boundary or disruption.",
+      "Preference states a reaction, while an evidence-based visual claim identifies a visible feature such as composition, color, scale, or framing and explains how it produces meaning.",
+      "The work was made for a particular place and public. Moving it or altering it can change its meaning, while different audiences may value age, legibility, history, or participation differently.",
+      "A strong answer supports the limited, documented treatment because it stabilizes damage, tests intervention cautiously, and lets visitors compare alternatives without pretending uncertainty is solved.",
+      "Responsible judgment states its purpose, cites visual and contextual evidence, documents trade-offs, and remains accountable to both the artwork and the people affected by the decision."
+    ];
+    return answers[index] || "Use a specific visual or contextual detail from the passage and explain how it supports the interpretation.";
+  }
+
   if (isMediaTheme(theme) && ctx.high) {
     const answers = [
       "The central claim is that strong movie analysis must prove an interpretation with specific film evidence, not just personal reaction.",
@@ -2160,13 +2616,14 @@ function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): str
   }
 
   if (ctx.high) {
+    const lens = interestLensFor(theme);
     const answers = [
-      "The central claim is that strong reasoning separates facts from guesses and uses checkable evidence before accepting an answer.",
-      `A strong detail is that one student notices ${ctx.run.detail} while another asks for proof that can be checked by someone else.`,
-      "The evidence board matters because it separates facts, guesses, reading details, and numbers before the group chooses an answer.",
-      "The passage warns against treating confidence as correctness; an answer deserves trust only when the evidence supports it.",
-      "A strong advanced response should state a claim, identify supporting evidence, explain why the evidence matters, and consider what could weaken the claim.",
-      "The final paragraph explains that each worksheet should feel like a new case with different details and a new reason to slow down."
+      `The central problem is deciding ${lens.decision} while producing a ${lens.artifact} that a real audience can understand and use.`,
+      "Defining the audience, constraints, and evidence prevents the team from judging success by preference or changing the standard after seeing the results.",
+      "One option is simple but incomplete, another is complete but demanding, and a third is memorable but difficult to verify.",
+      "The same criteria make the comparison consistent, so each option is judged against the project's purpose rather than against a convenient new standard.",
+      "A skeptical review reveals hidden assumptions, missing perspectives, and evidence that could overturn the preferred choice.",
+      `Advanced work with ${theme} requires authentic decisions, precise evidence, acknowledged trade-offs, iteration, and a useful product made for someone else.`
     ];
     return answers[index] || "Answer from the passage and point to the sentence that proves it.";
   }
@@ -2179,17 +2636,52 @@ function readingAnswerFor(index: number, theme: string, ctx: AnswerContext): str
     "After a test fails, the team should ask what changed, check the evidence, improve the design, and test again."
   ];
   const genericAnswers = [
-    `The main idea is that an interest like ${theme} can become a real research mission built on reading, evidence, testing, and math.`,
-    "A strong detail is that the learner writes down evidence instead of guessing, and checks what changed between one test and the next.",
-    "Prototype means an early model used to test an idea before trusting it.",
-    `The interests help by connecting several subjects at once and giving the ${theme} mission a clear, motivating purpose.`,
-    "After a test does not work, the learner should study what changed, use the evidence, improve the design, and try again."
+    `The main idea is that the class can use ${theme} to make something useful while practicing reading, counting, teamwork, and explanation.`,
+    `A strong detail is that the team uses ${interestLensFor(theme).evidence} to compare two ideas before improving the ${interestLensFor(theme).artifact}.`,
+    `${themeTitle(interestLensFor(theme).artifact)} means the useful product or plan the team creates for another person.`,
+    `The interest gives the mission a real purpose: the team is making a ${interestLensFor(theme).artifact} about ${theme} for an audience.`,
+    "When one part does not work, the team should find a clue, change one thing, test it, and explain what improved."
   ];
   const answers = ctx.isSpace ? spaceAnswers : genericAnswers;
   return answers[index] || "Use evidence from the passage and explain the answer in your own words.";
 }
 
 function mathAnswerFor(text: string): string | null {
+  if (/\$2,400 budget.*18 percent.*37 percent.*22 percent/i.test(text)) return "$552 remains.";
+  if (/review of 160 users.*116.*132/i.test(text)) return "The rate rises from 72.5 percent to 82.5 percent, an increase of 10 percentage points.";
+  if (/scores of 72, 84, and 78.*fifth criterion/i.test(text)) return "Prototype 3, with a weighted average of about 79.3.";
+  if (/takes 48 minutes.*17\.5 percent/i.test(text)) return "39.6 minutes.";
+  if (/250 observations includes 42 exceptions/i.test(text)) return "16.8 percent are exceptions; they reveal the limits and conditions of the pattern.";
+  if (/18 muffins using 540 grams/i.test(text)) return "1,500 grams of flour.";
+  if (/batch costs \$13\.68.*24 portions/i.test(text)) return "$0.68 per packaged portion.";
+  if (/18\.4 kg before changes and 12\.1 kg/i.test(text)) return "About a 34.2 percent reduction.";
+  if (/62 percent flour, 38 percent water/i.test(text)) return "775 grams flour and 475 grams water.";
+  if (/scores 7, 8, 8, 9, 6, 8, 9, and 7/i.test(text)) return "Mean 7.75; range 3.";
+  if (/counts at four sites are 24, 18, 11, and 7/i.test(text)) return "About 70.8 percent lower.";
+  if (/42 of 70 nests.*57 of 75/i.test(text)) return "The rate rises from 60 percent to 76 percent, an increase of 16 percentage points.";
+  if (/6 sites monthly for 18 months/i.test(text)) return "432 site-measurements.";
+  if (/1,250 to 1,475.*1,298/i.test(text)) return "An 18 percent increase, followed by a 12 percent decrease.";
+  if (/36 invasive plants in 15 plots/i.test(text)) return "30 plants per 100 square meters.";
+  if (/passing accuracy rises from 64 percent to 78 percent/i.test(text)) return "About a 21.9 percent relative increase.";
+  if (/72, 71, 73, 70, 72, 86/i.test(text)) return "Mean 74 seconds; the 86-second outlier raises the mean above the typical 70-73 second cluster.";
+  if (/54\.2, 54\.5, 54\.3, 54\.4, and 54\.1/i.test(text)) return "Range 0.4 seconds; mean 54.3 seconds.";
+  if (/420 to 350 minutes/i.test(text)) return "Training volume decreases about 16.7 percent; high-intensity distance decreases about 3.3 percent.";
+  if (/18 of 30 matches.*14 of 20/i.test(text)) return "The win rate rises from 60 percent to 70 percent, an increase of 10 percentage points.";
+  if (/96 beats per minute.*64 measures/i.test(text)) return "2 minutes 40 seconds.";
+  if (/48 audio layers to 34/i.test(text)) return "About a 29.2 percent reduction.";
+  if (/126 of 180 listeners.*99 rate/i.test(text)) return "70 percent chose Version B as clearer; 55 percent rated Version A more exciting.";
+  if (/four-note motif lasts 1\.5 seconds/i.test(text)) return "18 seconds total, which is 10 percent of the three-minute piece.";
+  if (/92 dB.*80 dB/i.test(text)) return "Approximately 6.3 percent of the original intensity remains.";
+  if (/raises mission completion from 58 percent to 81 percent/i.test(text)) return "About a 39.7 percent relative increase.";
+  if (/route takes 150 seconds.*adds 18 seconds/i.test(text)) return "Battery life increases 31 percent; route time increases 12 percent.";
+  if (/2,400 requests per minute/i.test(text)) return "About 2,824 requests per minute.";
+  if (/126 of 180 users.*144 of 180/i.test(text)) return "10 percentage points.";
+  if (/24 meters using 18 watt-hours/i.test(text)) return "52.5 watt-hours.";
+  if (/8\.4 meters.*1:20 scale/i.test(text)) return "42 centimeters.";
+  if (/\$18,500 budget/i.test(text)) return "About 27.0 percent remains.";
+  if (/168 of 240 visitors/i.test(text)) return "Approximately 64.1 percent to 75.9 percent; the survey estimates that roughly two-thirds to three-quarters of similar visitors prefer limited conservation.";
+  if (/loses 12 percent.*brightness/i.test(text)) return "About 62.0 brightness units.";
+  if (/frame measures 90 cm by 70 cm/i.test(text)) return "2,556 square centimeters.";
   if (/1880 and .*1895/i.test(text)) return "15 years.";
   if (/\$40,000 to \$58,000/i.test(text)) return "$18,000 increase; more evidence is needed because spending alone does not prove outcomes improved.";
   if (/120 letters.*35 percent/i.test(text)) return "42 letters.";
@@ -2219,6 +2711,41 @@ function mathAnswerFor(text: string): string | null {
 }
 
 function mathExplanationFor(text: string): string | null {
+  if (/\$2,400 budget.*18 percent.*37 percent.*22 percent/i.test(text)) return "The listed shares total 77 percent, leaving 23 percent. Then 0.23 x 2,400 = $552.";
+  if (/review of 160 users.*116.*132/i.test(text)) return "116/160 = 72.5 percent and 132/160 = 82.5 percent, so the increase is 10 percentage points.";
+  if (/scores of 72, 84, and 78.*fifth criterion/i.test(text)) return "Treat the first four criteria as four copies of each score and the fifth as two copies: P1=(4x72+2x90)/6=78; P2=(4x84+2x65)/6=77.7; P3=(4x78+2x82)/6=79.3.";
+  if (/takes 48 minutes.*17\.5 percent/i.test(text)) return "Keep 82.5 percent of the original time: 48 x 0.825 = 39.6 minutes.";
+  if (/250 observations includes 42 exceptions/i.test(text)) return "42/250 x 100 = 16.8 percent. Reporting exceptions prevents the conclusion from appearing more universal than the evidence supports.";
+  if (/18 muffins using 540 grams/i.test(text)) return "Each muffin uses 540/18 = 30 grams of flour. Then 50 x 30 = 1,500 grams.";
+  if (/batch costs \$13\.68.*24 portions/i.test(text)) return "Food cost is 13.68/24 = $0.57. Add $0.11 packaging for $0.68 per portion.";
+  if (/18\.4 kg before changes and 12\.1 kg/i.test(text)) return "Waste falls by 6.3 kg. Then 6.3/18.4 x 100 is about 34.2 percent.";
+  if (/62 percent flour, 38 percent water/i.test(text)) return "Flour is 0.62 x 1,250 = 775 grams. Water is 0.38 x 1,250 = 475 grams.";
+  if (/scores 7, 8, 8, 9, 6, 8, 9, and 7/i.test(text)) return "The scores total 62, so the mean is 62/8 = 7.75. Range is 9 - 6 = 3.";
+  if (/counts at four sites are 24, 18, 11, and 7/i.test(text)) return "The decrease is 17. Divide 17 by the original 24 and multiply by 100 to get about 70.8 percent.";
+  if (/42 of 70 nests.*57 of 75/i.test(text)) return "42/70 = 60 percent and 57/75 = 76 percent. The difference is 16 percentage points.";
+  if (/6 sites monthly for 18 months/i.test(text)) return "There are 6 x 18 = 108 site visits, with 4 measurements each: 108 x 4 = 432.";
+  if (/1,250 to 1,475.*1,298/i.test(text)) return "Increase: 225/1,250 x 100 = 18 percent. Decrease: 177/1,475 x 100 = 12 percent.";
+  if (/36 invasive plants in 15 plots/i.test(text)) return "The sampled area is 15 x 8 = 120 square meters. Density is 36/120 x 100 = 30 plants per 100 square meters.";
+  if (/passing accuracy rises from 64 percent to 78 percent/i.test(text)) return "The gain is 14 percentage points. Relative increase is 14 / 64 x 100, about 21.9 percent.";
+  if (/72, 71, 73, 70, 72, 86/i.test(text)) return "The total is 444, so 444 / 6 = 74. Without 86, the mean is 71.6, showing how the outlier pulls the mean upward.";
+  if (/54\.2, 54\.5, 54\.3, 54\.4, and 54\.1/i.test(text)) return "Range is 54.5 - 54.1 = 0.4. The total is 271.5, and 271.5 / 5 = 54.3.";
+  if (/420 to 350 minutes/i.test(text)) return "Volume falls 70/420 x 100 = 16.7 percent. Distance falls 0.3/9.0 x 100 = 3.3 percent.";
+  if (/18 of 30 matches.*14 of 20/i.test(text)) return "18/30 = 60 percent and 14/20 = 70 percent, so the difference is 10 percentage points.";
+  if (/96 beats per minute.*64 measures/i.test(text)) return "There are 64 x 4 = 256 beats. At 96 beats per minute, 256/96 = 2.6667 minutes, or 2 minutes 40 seconds.";
+  if (/48 audio layers to 34/i.test(text)) return "The reduction is 14 layers. Then 14/48 x 100 is about 29.2 percent.";
+  if (/126 of 180 listeners.*99 rate/i.test(text)) return "126/180 = 70 percent and 99/180 = 55 percent. These descriptions are separate, so they need not total 100 percent.";
+  if (/four-note motif lasts 1\.5 seconds/i.test(text)) return "1.5 x 12 = 18 seconds. Three minutes is 180 seconds, and 18/180 = 0.10.";
+  if (/92 dB.*80 dB/i.test(text)) return "A 12 dB drop corresponds to an intensity ratio of 10^(-12/10), about 0.063, or 6.3 percent.";
+  if (/raises mission completion from 58 percent to 81 percent/i.test(text)) return "The increase is 23 percentage points. Relative increase is 23 / 58 x 100, about 39.7 percent.";
+  if (/route takes 150 seconds.*adds 18 seconds/i.test(text)) return "Battery gain is 12.4 / 40 x 100 = 31 percent. Route-time gain is 18 / 150 x 100 = 12 percent.";
+  if (/2,400 requests per minute/i.test(text)) return "A 15 percent time reduction leaves 85 percent of the original processing time, so capacity is 2,400 / 0.85, about 2,824.";
+  if (/126 of 180 users.*144 of 180/i.test(text)) return "Version A is 126/180 = 70 percent and version B is 144/180 = 80 percent, a difference of 10 percentage points.";
+  if (/24 meters using 18 watt-hours/i.test(text)) return "The robot uses 18/24 = 0.75 watt-hours per meter. For 70 meters, 70 x 0.75 = 52.5 watt-hours.";
+  if (/8\.4 meters.*1:20 scale/i.test(text)) return "Convert 8.4 meters to 840 centimeters, then divide by 20: 840 / 20 = 42 centimeters.";
+  if (/\$18,500 budget/i.test(text)) return "The listed costs total $13,500, leaving $5,000. Then 5,000 / 18,500 x 100 is about 27.0 percent.";
+  if (/168 of 240 visitors/i.test(text)) return "p = 168/240 = 0.70. The margin is 2 x sqrt(0.70 x 0.30 / 240), about 0.059, so the interval is 0.641 to 0.759.";
+  if (/loses 12 percent.*brightness/i.test(text)) return "Retain 88 percent each decade: 80 x 0.88 x 0.88 = 61.952, which rounds to 62.0.";
+  if (/frame measures 90 cm by 70 cm/i.test(text)) return "The outer area is 90 x 70 = 6,300 square centimeters. The opening is 72 x 52 = 3,744, so 6,300 - 3,744 = 2,556.";
   if (/1880 and .*1895/i.test(text)) return "Subtract the earlier year from the later year: 1895 - 1880 = 15.";
   if (/\$40,000 to \$58,000/i.test(text)) return "Subtract 40,000 from 58,000. A historian still checks whether the extra money changed attendance, access, or outcomes.";
   if (/120 letters.*35 percent/i.test(text)) return "35 percent of 120 is 0.35 x 120 = 42.";
@@ -2248,6 +2775,10 @@ function mathExplanationFor(text: string): string | null {
 }
 
 function logicAnswerFor(text: string): string | null {
+  if (/Most people preferred Option A/i.test(text)) return "Preference is only one criterion and may reflect familiarity or presentation. The decision also needs evidence about accuracy, purpose, cost, safety, or audience usefulness.";
+  if (/Rank clarity, accuracy, cost, and audience usefulness/i.test(text)) return "Sample: accuracy first and audience usefulness second, because the product must be trustworthy and help the intended person; clarity and cost shape the best feasible version.";
+  if (/every successful .* meets the audience goal/i.test(text)) return "This version does not satisfy the stated condition for success. That does not prove every feature is poor or identify why the audience goal was missed.";
+  if (/keeping, revising, or rejecting a .* proposal/i.test(text)) return "Sample: keep when core criteria and the audience goal are met, revise when a correctable feature misses its target, and reject when the central purpose or a non-negotiable constraint fails.";
   if (/5, 8, 11/.test(text)) return "14 and 17. The rule adds 3 each time.";
   if (/2, 5, 11, 23, 47/.test(text)) return "95. Each step doubles the number and adds 1 (n x 2 + 1).";
   if (/better evidence/i.test(text)) return "A detail from the passage, because it can be proven by pointing to the text; a memory guess cannot be checked.";
@@ -2256,6 +2787,30 @@ function logicAnswerFor(text: string): string | null {
   if (/which plan would you recommend/i.test(text)) return "Open response. A strong answer weighs higher average scores against steadier scores and justifies the choice with the data.";
   if (/historian argues/i.test(text)) return "Open response. Stronger evidence would include records, dates, economic data, or comparisons that rule out other causes.";
   if (/two-sentence argument/i.test(text)) return "Open response: two sentences linking the interest to persistence, with one reason and one example.";
+  if (/Most surveyed visitors prefer restoration/i.test(text)) return "The conclusion treats popularity as proof of ethical correctness. The curator also needs evidence about original material, long-term risk, artist intent, community history, and viable alternatives.";
+  if (/Rank these criteria for an exhibition/i.test(text)) return "Sample: historical significance first and community relevance second, because the entrance should establish why the exhibition matters and whom it serves; immediate attention is useful but should not override purpose.";
+  if (/every authentic restoration preserves original material/i.test(text)) return "The proposal does not meet the stated condition for authentic restoration. This does not prove it is unethical or ineffective; it only shows it fails that definition of authenticity.";
+  if (/Construct a decision rule/i.test(text)) return "Sample: choose the least irreversible option that meets the stated purpose, protects original material, addresses documented damage, and can be justified with visual, historical, technical, and community evidence.";
+  if (/Players who stayed longer learned more/i.test(text)) return "The claim confuses correlation with causation; motivated or skilled players may both stay longer and learn more. Randomly assign comparable players to different session lengths and measure later mastery.";
+  if (/Rank accessibility, learning retention/i.test(text)) return "Sample: accessibility first and learning retention second, because users must be able to enter the experience and the benefit should persist; speed and polish support those goals but should not replace them.";
+  if (/every reliable release passes the regression suite/i.test(text)) return "The release does not satisfy the stated condition for reliability. The failure does not prove the entire product is unusable; it identifies at least one unresolved regression or test problem.";
+  if (/choosing whether to ship, revise, or remove a feature/i.test(text)) return "Sample: ship only if the feature meets its user goal, passes safety and regression checks, and shows no unacceptable harm; revise when evidence is mixed; remove it when costs consistently exceed benefits.";
+  if (/team won after the new training plan/i.test(text)) return "A single before-and-after result does not rule out opponent strength, player availability, luck, or other changes. Compare repeated matches, training measures, and a suitable control or baseline.";
+  if (/Rank peak performance, consistency/i.test(text)) return "Sample: tactical fit first and recovery second, because the athlete must serve the event's role and be physically ready; peak and consistency then distinguish candidates who meet those conditions.";
+  if (/every overtrained athlete shows declining recovery/i.test(text)) return "Declining recovery is consistent with overtraining but does not prove it; illness, stress, poor sleep, or measurement error could produce the same sign.";
+  if (/increasing, maintaining, or reducing training load/i.test(text)) return "Sample: increase only when recovery and technique remain stable, maintain when adaptation continues without warning signs, and reduce when performance and recovery decline together.";
+  if (/Most listeners preferred the louder mix/i.test(text)) return "The claim confuses preference in one test with universal musical quality and may confound loudness with arrangement. Loudness-match the mixes and measure clarity, emotional impact, and preference separately.";
+  if (/Rank clarity, emotional impact/i.test(text)) return "Sample: emotional impact first and clarity second, because the arrangement needs a meaningful expressive goal that listeners can perceive; performer comfort and energy remain constraints.";
+  if (/every effective arrangement preserves the melody/i.test(text)) return "The arrangement fails the stated condition for effectiveness. That does not prove every listener will dislike it or that it lacks other artistic value.";
+  if (/keeping, revising, or removing a musical layer/i.test(text)) return "Sample: keep a layer when it has a distinct musical role, revise it when it masks a more important element, and remove it when it adds density without improving rhythm, harmony, color, or form.";
+  if (/Batch B had the highest flavor score/i.test(text)) return "The conclusion ignores texture, stability, cost, safety, and the full design brief. Use a weighted rule that requires every non-negotiable criterion and then compares the remaining scores.";
+  if (/Rank safety, taste, texture, cost/i.test(text)) return "Sample: safety first because harm is unacceptable, then taste because the product must be willingly eaten; texture, cost, and sustainability shape the best option among safe, appealing prototypes.";
+  if (/every safe batch meets the allergen protocol/i.test(text)) return "Batch D does not satisfy the stated condition for safety. This does not identify the exact hazard or prove that every other aspect of the batch is poor.";
+  if (/keeping, revising, or rejecting a prototype/i.test(text)) return "Sample: keep when all non-negotiable criteria pass, revise when one adjustable quality misses its target, and reject when safety fails or several core requirements conflict.";
+  if (/Insect diversity fell where turbidity was high/i.test(text)) return "The claim treats correlation as a complete causal explanation and ignores temperature, flow, habitat, and sampling. Repeated above-below and before-after comparisons would strengthen the case.";
+  if (/Rank biodiversity, public access/i.test(text)) return "Sample: biodiversity first and community trust second, because the policy exists to protect ecological function and will work only if people understand and support it; access and cost remain constraints.";
+  if (/every resilient wetland recovers/i.test(text)) return "The wetland does not meet the stated recovery condition, but one failure does not reveal whether the cause is low resilience, an extraordinary disturbance, or inadequate measurement time.";
+  if (/maintaining, expanding, or ending an environmental intervention/i.test(text)) return "Sample: maintain when indicators improve toward the target, expand when harm remains above a threshold, and end or redesign when repeated monitoring shows no benefit or unacceptable social cost.";
   return null;
 }
 
@@ -2270,6 +2825,41 @@ function logicExplanationFor(text: string): string | null {
 function mathChoicesFor(question: { section: string; text: string }): string[] | null {
   if (question.section !== "Math Reasoning") return null;
   const text = question.text;
+  if (/\$2,400 budget.*18 percent.*37 percent.*22 percent/i.test(text)) return ["$432", "$504", "$552", "$1,848"];
+  if (/review of 160 users.*116.*132/i.test(text)) return ["8 points", "10 points", "16 points", "20 points"];
+  if (/scores of 72, 84, and 78.*fifth criterion/i.test(text)) return ["Prototype 1", "Prototype 2", "Prototype 3", "All are equal"];
+  if (/takes 48 minutes.*17\.5 percent/i.test(text)) return ["30.5", "39.6", "40.5", "45.2"];
+  if (/250 observations includes 42 exceptions/i.test(text)) return ["8.4%", "16.8%", "20.8%", "42%"];
+  if (/18 muffins using 540 grams/i.test(text)) return ["900 g", "1,080 g", "1,500 g", "2,700 g"];
+  if (/batch costs \$13\.68.*24 portions/i.test(text)) return ["$0.57", "$0.68", "$0.79", "$1.14"];
+  if (/18\.4 kg before changes and 12\.1 kg/i.test(text)) return ["25.7%", "34.2%", "52.3%", "65.8%"];
+  if (/62 percent flour, 38 percent water/i.test(text)) return ["620 g and 380 g", "775 g and 475 g", "800 g and 450 g", "850 g and 400 g"];
+  if (/scores 7, 8, 8, 9, 6, 8, 9, and 7/i.test(text)) return ["7.5 and 2", "7.75 and 3", "8 and 3", "8.25 and 2"];
+  if (/counts at four sites are 24, 18, 11, and 7/i.test(text)) return ["29.2%", "41.7%", "70.8%", "242.9%"];
+  if (/42 of 70 nests.*57 of 75/i.test(text)) return ["10 points", "14 points", "16 points", "19 points"];
+  if (/6 sites monthly for 18 months/i.test(text)) return ["108", "216", "432", "648"];
+  if (/1,250 to 1,475.*1,298/i.test(text)) return ["18% then 12%", "12% then 18%", "22.5% then 17.7%", "18% then 15%"];
+  if (/36 invasive plants in 15 plots/i.test(text)) return ["12", "24", "30", "45"];
+  if (/passing accuracy rises from 64 percent to 78 percent/i.test(text)) return ["14.0%", "17.9%", "21.9%", "78.0%"];
+  if (/72, 71, 73, 70, 72, 86/i.test(text)) return ["72", "73", "74", "76"];
+  if (/54\.2, 54\.5, 54\.3, 54\.4, and 54\.1/i.test(text)) return ["0.4 and 54.3", "0.5 and 54.2", "0.4 and 54.5", "1.4 and 54.3"];
+  if (/420 to 350 minutes/i.test(text)) return ["16.7% and 3.3%", "3.3% and 16.7%", "20% and 5%", "70% and 0.3%"];
+  if (/18 of 30 matches.*14 of 20/i.test(text)) return ["5 points", "10 points", "14 points", "20 points"];
+  if (/96 beats per minute.*64 measures/i.test(text)) return ["2:24", "2:40", "3:12", "4:16"];
+  if (/48 audio layers to 34/i.test(text)) return ["14.0%", "22.6%", "29.2%", "41.2%"];
+  if (/126 of 180 listeners.*99 rate/i.test(text)) return ["70% and 55%", "55% and 70%", "63% and 50%", "70% and 30%"];
+  if (/four-note motif lasts 1\.5 seconds/i.test(text)) return ["12 sec and 6.7%", "18 sec and 10%", "18 sec and 15%", "24 sec and 10%"];
+  if (/92 dB.*80 dB/i.test(text)) return ["1.2%", "6.3%", "12%", "63%"];
+  if (/raises mission completion from 58 percent to 81 percent/i.test(text)) return ["23.0%", "28.4%", "39.7%", "58.0%"];
+  if (/route takes 150 seconds.*adds 18 seconds/i.test(text)) return ["31% and 12%", "12% and 31%", "24% and 18%", "42% and 8%"];
+  if (/2,400 requests per minute/i.test(text)) return ["2,040", "2,760", "2,824", "3,600"];
+  if (/126 of 180 users.*144 of 180/i.test(text)) return ["8 points", "10 points", "18 points", "20 points"];
+  if (/24 meters using 18 watt-hours/i.test(text)) return ["42.0 Wh", "48.0 Wh", "52.5 Wh", "70.0 Wh"];
+  if (/8\.4 meters.*1:20 scale/i.test(text)) return ["4.2 cm", "42 cm", "168 cm", "420 cm"];
+  if (/\$18,500 budget/i.test(text)) return ["18.5 percent", "27.0 percent", "32.4 percent", "73.0 percent"];
+  if (/168 of 240 visitors/i.test(text)) return ["64.1% to 75.9%", "68.0% to 72.0%", "70.0% to 82.0%", "58.2% to 81.8%"];
+  if (/loses 12 percent.*brightness/i.test(text)) return ["61.9", "64.0", "68.0", "70.4"];
+  if (/frame measures 90 cm by 70 cm/i.test(text)) return ["1,278 cm²", "2,556 cm²", "3,744 cm²", "6,300 cm²"];
   if (/1880 and .*1895/i.test(text)) return ["5 years", "15 years", "25 years", "95 years"];
   if (/\$40,000 to \$58,000/i.test(text)) return ["$8,000", "$18,000", "$22,000", "$98,000"];
   if (/120 letters.*35 percent/i.test(text)) return ["24", "35", "42", "85"];
@@ -2309,6 +2899,48 @@ function questionHintFor(question: { section: string }): string {
 }
 
 function grammarAnswerFor(text: string): string {
+  if (/project was good because it worked well/i.test(text)) return "Sample: \"The revised project met the audience-comprehension target while staying within the stated constraints.\"";
+  if (/was easy to understand.*left out an important limitation/i.test(text)) return "Sample: \"Although the proposal was easy to understand, it left out an important limitation.\"";
+  if (/first result proves this is the best way/i.test(text)) return "Sample: \"The first result supports this approach under the tested conditions, but broader evidence is needed.\"";
+  if (/team compared costs, measuring outcomes/i.test(text)) return "The team compared costs, measured outcomes, and interviewed users.";
+  if (/criterion, one piece of evidence/i.test(text)) return "Sample: \"The revised proposal best meets the clarity criterion because comprehension rose by ten percentage points, although the sample represents only one audience.\"";
+  if (/counterargument to the team's preferred/i.test(text)) return "Sample: \"The preferred option may be easier to use but oversimplifies the problem. However, its clarity could justify using it as an introduction before a more complete version.\"";
+  if (/Batch C was better because it worked better/i.test(text)) return "Sample: \"Batch C met the cost target while maintaining acceptable flavor and texture after four hours.\"";
+  if (/Batch B had the best flavor/i.test(text)) return "Sample: \"Although Batch B had the best flavor, its center was gummy.\"";
+  if (/tasting proves fruit puree/i.test(text)) return "Sample: \"The tasting suggests fruit puree improves flavor in this formula, but texture and recipe-specific conditions limit the conclusion.\"";
+  if (/team measured cost, rating texture/i.test(text)) return "The team measured cost, rated texture, and tested whether the muffins stayed moist.";
+  if (/recipe-development claim/i.test(text)) return "Sample: \"Batch C best satisfies the design brief because it meets cost and texture targets, although its flavor score is slightly lower than Batch B's.\"";
+  if (/cheapest acceptable recipe/i.test(text)) return "Sample: \"The cheapest recipe may improve access and profitability but could reduce sensory quality or stability. Cost should decide only among options that meet safety and quality thresholds.\"";
+  if (/stream is unhealthy because the water is bad/i.test(text)) return "Sample: \"Aquatic-insect diversity is lowest at sites with high turbidity and low dissolved oxygen.\"";
+  if (/Turbidity rose after rainfall/i.test(text)) return "Sample: \"Turbidity rose after rainfall; however, dissolved oxygen was already low in warm pools.\"";
+  if (/Construction proves it caused every insect decline/i.test(text)) return "Sample: \"Construction-related sediment likely contributes to some declines, although temperature, flow, and habitat also remain plausible causes.\"";
+  if (/team measured temperature, recording turbidity/i.test(text)) return "The team measured temperature, recorded turbidity, and identified insects.";
+  if (/ecological claim naming/i.test(text)) return "Sample: \"Insect diversity declines below the construction site after rainfall, supporting a sediment effect while leaving temperature as a possible contributor.\"";
+  if (/closing the entire habitat/i.test(text)) return "Sample: \"A full closure would provide the strongest immediate protection but impose high social costs. Targeted closures should be tested first with a published threshold for expansion.\"";
+  if (/athlete played badly because they were tired/i.test(text)) return "Sample: \"The athlete's passing accuracy declined after the seventieth minute as high-intensity distance fell.\"";
+  if (/Training volume decreased/i.test(text)) return "Sample: \"Although training volume decreased, late-session accuracy improved.\"";
+  if (/recovery plan proves every athlete/i.test(text)) return "Sample: \"The recovery plan may help similar athletes, but the small sample and short trial limit the conclusion.\"";
+  if (/staff measured sprint speed/i.test(text)) return "The staff measured sprint speed, recorded sleep, and tested passing accuracy.";
+  if (/performance claim that names/i.test(text)) return "Sample: \"The adjusted group maintained higher late-session accuracy, although the two-week sample is too small for a universal conclusion.\"";
+  if (/selecting an athlete using average performance alone/i.test(text)) return "Sample: \"Average time summarizes performance but hides consistency and race-specific strengths. Still, it provides a useful first comparison when combined with variance and tactical fit.\"";
+  if (/arrangement sounded better because/i.test(text)) return "Sample: \"The spacious arrangement improved vocal clarity by reducing competition in the middle register.\"";
+  if (/Version B was clearer/i.test(text)) return "Sample: \"Although Version B was clearer, some listeners preferred the energy of Version A.\"";
+  if (/listener survey proves the sparse arrangement/i.test(text)) return "Sample: \"The survey suggests the sparse arrangement improves clarity in this auditorium, but it does not establish universal musical quality.\"";
+  if (/producer adjusted the tempo/i.test(text)) return "The producer adjusted the tempo, changed the dynamics, and reduced the bass.";
+  if (/interpretation connecting one musical element/i.test(text)) return "Sample: \"The shift from piano to distorted guitar changes the motif from reflective to urgent.\"";
+  if (/making every instrument equally prominent/i.test(text)) return "Sample: \"Equal prominence can hide the melody and weaken musical hierarchy. However, shared prominence may be appropriate when the piece intentionally presents several independent voices.\"";
+  if (/game was bad because the controls were bad/i.test(text)) return "Sample: \"The game felt unresponsive because input latency delayed each movement.\"";
+  if (/tutorial improved completion/i.test(text)) return "Sample: \"Although the tutorial improved completion, it increased the mission time.\"";
+  if (/new interface proves every player/i.test(text)) return "Sample: \"The new interface may help similar players learn faster, but broader testing is needed.\"";
+  if (/team measured completion/i.test(text)) return "The team measured completion, recorded errors, and tested whether players understood the system.";
+  if (/user need, a feature/i.test(text)) return "Sample: \"To help new players understand the energy system, fading prompts will explain early decisions and disappear after demonstrated mastery.\"";
+  if (/optimizing only for speed or completion/i.test(text)) return "Sample: \"Optimizing only for completion may produce dependence on prompts rather than durable learning. However, completion data remains useful for identifying where users become blocked.\"";
+  if (/powerful because it has powerful colors/i.test(text)) return "Sample: \"The artwork creates tension through its sharp contrast between saturated red and muted gray.\"";
+  if (/mural is damaged/i.test(text)) return "Sample: \"Although the mural is damaged, its composition remains legible.\"";
+  if (/red line definitely proves/i.test(text)) return "Sample: \"The red line may suggest anger or conflict, although the interpretation requires contextual evidence.\"";
+  if (/parallel structure/i.test(text)) return "The curator wants to stabilize the paint, document the damage, and consult residents.";
+  if (/precise thesis/i.test(text)) return "Sample: \"The mural's red diagonal disrupts the stable vertical composition, turning the river into a symbol of social division.\"";
+  if (/counterargument to a restoration proposal/i.test(text)) return "Sample: \"Full restoration risks replacing evidence of the mural's public history with a newly manufactured surface. However, restoration could recover details that current viewers can no longer interpret.\"";
   if (/trained hard/i.test(text)) return "Two sentences or a semicolon: \"The team trained hard. They were ready.\"";
   if (/plan was simple/i.test(text)) return "Sample: \"The simple plan worked.\"";
   if (/Due to the fact that/i.test(text)) return "Sample: \"Because they practiced, they improved.\"";
@@ -2319,6 +2951,42 @@ function grammarAnswerFor(text: string): string {
 }
 
 function scienceAnswerFor(text: string): string {
+  if (/controlled recipe test/i.test(text)) return "Independent variable: egg substitute. Outcomes could include firmness and moisture after four hours. Controls include flour mass, mixing method, portion mass, oven temperature, and baking time.";
+  if (/tasters be blinded/i.test(text)) return "Blinding reduces expectation bias so names, ingredients, or preferred theories do not shape sensory ratings.";
+  if (/moist immediately after baking/i.test(text)) return "Steam may temporarily soften the crumb, and moisture may migrate or evaporate during storage. One warm sample does not establish shelf stability.";
+  if (/oven temperature variation/i.test(text)) return "A hotter or cooler oven can change rise, browning, moisture, and structure, making a recipe difference look larger or smaller than it is.";
+  if (/objective texture measurement/i.test(text)) return "Sample: compression force can measure firmness, but it cannot fully capture flavor, aroma, mouthfeel, or whether a texture is pleasant.";
+  if (/food safety from food quality/i.test(text)) return "Safety concerns whether food can cause harm, such as allergen exposure or unsafe storage; quality concerns preference and performance, such as flavor or dryness.";
+  if (/sampling plan that tests one possible cause/i.test(text)) return "Sample: compare matched sites above and below construction after similar rainfall. Measure turbidity and insect diversity while controlling habitat type, sampling effort, season, and time of day.";
+  if (/include sites above and below/i.test(text)) return "Upstream sites provide a reference for natural conditions, while downstream sites reveal whether the suspected disturbance aligns with a change.";
+  if (/Species diversity is lower at one site/i.test(text)) return "The habitat may differ naturally, or sampling effort and season may differ. Temperature, flow, predators, disease, or random variation are other explanations.";
+  if (/rainfall could confound/i.test(text)) return "Rainfall can raise turbidity differently across sites and times, so location effects may actually reflect unequal recent weather or runoff.";
+  if (/indicator species or environmental measure/i.test(text)) return "Sample: dissolved oxygen is directly relevant to aquatic organisms, but one reading varies with time and temperature and cannot describe the entire ecosystem.";
+  if (/relationship in the passage/i.test(text)) return "High turbidity and low diversity are correlated. Causation requires showing that sediment changes precede and produce biological change while alternatives are controlled.";
+  if (/controlled comparison of two recovery routines/i.test(text)) return "Independent variable: recovery routine. Outcomes could include late-session accuracy and a standardized recovery score. Controls include training load, testing time, nutrition guidance, and comparable athletes.";
+  if (/avoid changing training volume, sleep routine/i.test(text)) return "Changing several factors together makes it impossible to identify which factor caused the performance difference.";
+  if (/performs better after a lighter week/i.test(text)) return "The opponent may have been weaker, or injured players may have returned. Tactical changes, motivation, and random variation are other alternatives.";
+  if (/opponent strength could confound/i.test(text)) return "If later opponents are weaker, improved results may be attributed to the tactic even when opponent difficulty caused the difference.";
+  if (/measure of fatigue that complements/i.test(text)) return "Sample: repeated sprint decline provides an objective performance measure, but it can also be affected by motivation, technique, and testing conditions.";
+  if (/training load and injury data/i.test(text)) return "A correlation shows injuries rise with load; causation requires controlling prior injury, recovery, schedule, and other factors while testing whether load changes alter risk.";
+  if (/controlled listening test/i.test(text)) return "Independent variable: arrangement version. Measures could include clarity ratings and recall of the main motif. Controls include playback level, room, equipment, excerpt, and listener instructions.";
+  if (/producer change only one major element/i.test(text)) return "Changing one element makes differences in listener response easier to attribute to that element rather than to several simultaneous edits.";
+  if (/prefer one mix in a classroom/i.test(text)) return "The auditorium has different reverberation and audience size, and the playback system or listening position may alter balance.";
+  if (/playback volume could confound/i.test(text)) return "Listeners often prefer a louder version even when the arrangement is unchanged, so mixes should be loudness-matched.";
+  if (/objective acoustic measurement/i.test(text)) return "Sample: reverberation time measures how long sound persists, but it cannot determine whether an arrangement is expressive or meaningful.";
+  if (/rehearsal time and performance ratings/i.test(text)) return "More rehearsal may correlate with higher ratings because stronger ensembles rehearse differently; causation requires comparable groups and controlled rehearsal changes.";
+  if (/controlled usability test/i.test(text)) return "Independent variable: the interface version. Dependent measures could include completion rate and error type. Controls include the same task, device class, instructions, time limit, and comparable participants.";
+  if (/robotics team change only one/i.test(text)) return "Changing one variable makes it possible to connect a performance difference to that variable instead of guessing among several simultaneous changes.";
+  if (/feature improves scores in one session/i.test(text)) return "Participants may have had more prior experience, or the second task may have been easier. Practice, device speed, and random variation are other possibilities.";
+  if (/device performance could confound/i.test(text)) return "A faster device can reduce latency independently of the interface, so apparent interface gains may actually come from hardware differences.";
+  if (/measure of long-term mastery/i.test(text)) return "Sample: test whether users can complete a new transfer task several days later without prompts.";
+  if (/correlation from causation/i.test(text)) return "Correlation means two outcomes vary together; causation requires evidence that changing one factor produced the other while alternatives were controlled.";
+  if (/direct light and filtered light/i.test(text)) return "Independent variable: light condition. Dependent variable: measured color or brightness change. Controls include identical pigment samples, exposure time, temperature, humidity, and measurement method.";
+  if (/tiny hidden area/i.test(text)) return "A test patch reveals discoloration, pigment loss, residue, or chemical reaction before the treatment risks the visible artwork.";
+  if (/cleaned test patch appears brighter/i.test(text)) return "Brightness may come from temporary moisture or surface change, and one day does not reveal delayed pigment damage or long-term instability.";
+  if (/humidity could act as a confounding variable/i.test(text)) return "Humidity may change fading, swelling, or chemical reactions at the same time as light exposure, making it unclear which variable caused the damage.";
+  if (/non-destructive measurement/i.test(text)) return "Sample: calibrated digital colorimetry could record the same pigment area's color values over time without removing material.";
+  if (/conservation from restoration/i.test(text)) return "Conservation stabilizes existing material and limits further damage; restoration attempts to recover an earlier appearance and may introduce replacement material.";
   if (/observe first/i.test(text)) return "Sample: observe what changes and what stays the same, because evidence beats guessing.";
   if (/NOT proof the change caused it/i.test(text)) return "Sample: the test may have been easier, or measured differently. Those are other possible causes.";
   if (/fair test/i.test(text)) return "Sample: change only one thing and keep everything else the same.";
@@ -2329,11 +2997,48 @@ function scienceAnswerFor(text: string): string {
 }
 
 function socialAnswerFor(text: string): string {
+  if (/original transit-station setting/i.test(text)) return "The station made the mural public, mobile, and part of daily community life; a museum changes the viewing pace, audience, and social function.";
+  if (/perspectives should be represented/i.test(text)) return "Include the artist or estate, conservators, historians, longtime residents, current community members, and museum audiences because each holds different evidence and stakes.";
+  if (/public ownership gives a community/i.test(text)) return "Sample: public ownership gives the community meaningful authority because the work forms part of shared space and memory, though technical conservation decisions still require specialist evidence.";
+  if (/patronage influence/i.test(text)) return "Patrons shape which artists receive resources, which subjects become visible, and which works institutions can preserve, so funding can affect the historical record.";
+  if (/clarify the artwork's historical context/i.test(text)) return "Sample: an interview with the artist could clarify intent, but memory and hindsight may reshape the account, so it should be checked against contemporary records.";
   if (/change life in a town/i.test(text)) return "Sample: it could create jobs, learning, or fun, which helps families and students.";
   if (/which mattered more/i.test(text)) return "Compare records and outcomes before and after each, then weigh the evidence.";
   if (/remember the same .* event differently/i.test(text)) return "People have different viewpoints, information, and feelings about the same event.";
   if (/rule or fair choice/i.test(text)) return "Sample: take fair turns, because it keeps the group welcoming and orderly.";
   return "Sample: give a reason and one piece of evidence for who is affected and why.";
+}
+
+function criticalThinkingAnswerFor(text: string): string {
+  if (/product recommendation citing/i.test(text)) return "Sample: Select Batch C because it meets the cost target and maintains texture after four hours while retaining strong flavor ratings. The trade-off is a slightly lower flavor score than Batch B.";
+  if (/one sensory score with satisfying/i.test(text)) return "One score captures a narrow preference; a design brief requires safety and minimum performance across several criteria. The best product is the strongest feasible whole, not the highest isolated number.";
+  if (/precise measurement can support/i.test(text)) return "Measurement makes cause and proportion visible, allowing the cook to repeat a successful idea, diagnose failure, and intentionally vary the recipe rather than guessing.";
+  if (/menu or product note/i.test(text)) return "Sample: \"Seed-and-fruit breakfast muffin developed for an allergen-aware school menu. The formula balances tenderness, cost, and four-hour freshness. It contains seeds and should be checked against individual dietary requirements.\"";
+  if (/intervention recommendation citing/i.test(text)) return "Sample: Install erosion controls and restore streamside shade because turbidity spikes below construction after rainfall and warm exposed pools show low oxygen. Seasonal monitoring is still needed to separate the contributions.";
+  if (/acting quickly with waiting/i.test(text)) return "Waiting can improve certainty but allow reversible harm to become permanent. A proportionate action with monitoring is appropriate when potential harm is serious and the intervention can be revised.";
+  if (/biodiversity can matter beyond/i.test(text)) return "Biodiversity can support food-web functions, recovery after disturbance, genetic options, and multiple ecological roles; equal species counts can still hide major functional differences.";
+  if (/causal assumption in the passage/i.test(text)) return "Sample: Challenge the assumption that sediment is the main cause by comparing matched shaded and exposed sites with similar turbidity while measuring oxygen and insect diversity.";
+  if (/concise public notice/i.test(text)) return "Sample: \"Targeted seasonal access limits will protect nesting zones where disturbance is highest while keeping marked paths open. Nesting success and compliance will be reviewed weekly; restrictions will expand only if success falls below the published threshold.\"";
+  if (/coaching recommendation/i.test(text)) return "Sample: Keep one high-intensity session but replace unnecessary volume with tactical work and recovery. The adjusted group maintained accuracy under fatigue and reported better recovery, although the two-week sample remains uncertain.";
+  if (/peak performance with maximizing reliable/i.test(text)) return "Peak performance may win when an exceptional result is necessary; reliability reduces the risk of a damaging result. The correct priority depends on event demands and acceptable risk.";
+  if (/harder training does not automatically/i.test(text)) return "Adaptation occurs through stress followed by recovery. Excess load can reduce technique, decision quality, health, and the body's ability to adapt.";
+  if (/athlete briefing/i.test(text)) return "Sample: \"This week preserves one hard session and reduces low-value volume so you can maintain late-match quality. Success means stable passing under fatigue and improved recovery scores. Complete the recovery target and report unusual soreness early.\"";
+  if (/arrangement recommendation/i.test(text)) return "Sample: Use the spacious arrangement in the auditorium because low frequencies linger and listeners rated its vocal line clearer. The trade-off is less continuous intensity, so save added layers for the final section.";
+  if (/technical accuracy with expressive interpretation/i.test(text)) return "Accuracy supplies the intended notes and rhythms; interpretation organizes them into direction, hierarchy, tension, and release. Strong performance requires both.";
+  if (/same motif can communicate differently/i.test(text)) return "Timbre and dynamics change associations and intensity: a quiet piano motif may feel reflective, while the same notes on distorted guitar can feel urgent.";
+  if (/production assumption/i.test(text)) return "Sample: Test the assumption that denser layers create more excitement by loudness-matching sparse and dense versions and measuring excitement, clarity, and motif recall.";
+  if (/concise program note/i.test(text)) return "Sample: \"A four-note motif travels between contrasting instruments while syncopated accompaniment repeatedly shifts its balance. Changes in timbre and dynamics reshape the motif without changing its notes, allowing the ensemble to explore how repetition can produce both familiarity and surprise.\"";
+  if (/product recommendation/i.test(text)) return "Sample: Adopt progressive support because completion rose from 58 to 81 percent and the design can fade prompts after success. The trade-off is a longer opening mission, which should be monitored against later independent performance.";
+  if (/immediate completion with optimizing for long-term mastery/i.test(text)) return "Immediate completion measures whether users can finish now; long-term mastery measures whether they understand and can transfer the skill later. A strong design uses early support without creating permanent dependence.";
+  if (/more automation does not always/i.test(text)) return "Automation can reduce effort but also hide decisions, weaken user control, create unsafe surprises, or optimize the wrong goal. Better automation is understandable, interruptible, and aligned with human needs.";
+  if (/Challenge one design assumption/i.test(text)) return "Sample: The team assumes a longer tutorial harms engagement. Test that assumption by comparing return rate and later independent performance, not only first-session duration.";
+  if (/concise release note/i.test(text)) return "Sample: \"Added fading tutorial prompts to clarify the energy system. We expect higher early completion without reducing independent play. The opening may take longer; we will monitor completion, return rate, and prompt-free transfer tasks.\"";
+  if (/curatorial recommendation/i.test(text)) return "Sample: The museum should use limited conservation because stabilizing the damaged panels protects original material, while a documented test area can recover information without committing the entire mural to repainting. The trade-off is that some faded passages will remain difficult to read.";
+  if (/Compare conservation and restoration/i.test(text)) return "Sample: Conservation better respects authenticity if authenticity means preserving original material and the mural's accumulated history. Restoration may recover the original appearance, but it risks replacing evidence of age with new work.";
+  if (/moves from a public station to a museum/i.test(text)) return "The move changes the audience, pace, and function: commuters encountered the mural as part of daily public life, while museum visitors approach it as a protected object with labels and institutional authority.";
+  if (/Challenge one interpretation/i.test(text)) return "Sample: Instead of symbolizing industrial danger, the red diagonal may represent connection because it links the figures to the river. The interpretation is plausible if the line visually joins rather than separates the main forms.";
+  if (/short exhibition label/i.test(text)) return "Sample: \"Created for a transit station in 1978, this mural connects workers, homes, and the river through repeated vertical forms and a striking red diagonal. Fading and water damage now complicate its display. Does the worn surface obscure the artist's meaning, or has age become part of the work's public history?\"";
+  return "Sample: make a specific claim, cite relevant evidence, explain the connection, and acknowledge a reasonable limitation or alternative.";
 }
 
 type OverflowQuestion = { text: string; answer: string; explanation: string; choices?: string[] };
@@ -2362,7 +3067,7 @@ function overflowQuestionFor(
         const pct = [25, 35, 45, 65][int(0, 3)];
         const ans = (n * pct) / 100;
         return {
-          text: `A ${theme} data set has ${n} entries. If ${pct} percent of them meet the quality standard, how many entries is that?`,
+          text: `A data set about ${theme} has ${n} entries. If ${pct} percent of them meet the quality standard, how many entries is that?`,
           answer: `${ans} entries.`,
           explanation: `${pct} percent of ${n} is ${pct / 100} x ${n} = ${ans}.`,
           choices: shuffleUnique([ans, ans + n / 10, Math.max(1, ans - n / 10), n - ans], rng).map((v) => String(v))
@@ -2385,7 +3090,7 @@ function overflowQuestionFor(
       const hi = lo + steps * 10;
       const gain = steps * int(3, 6);
       return {
-        text: `A ${theme} log shows practice time rising from ${lo} to ${hi} minutes while accuracy rises by ${gain} percentage points. What is the average accuracy gain per 10 minutes?`,
+        text: `A practice log for ${theme} shows time rising from ${lo} to ${hi} minutes while accuracy rises by ${gain} percentage points. What is the average accuracy gain per 10 minutes?`,
         answer: `${gain / steps} percentage points per 10 minutes.`,
         explanation: `From ${lo} to ${hi} minutes is ${steps} ten-minute steps; ${gain} / ${steps} = ${gain / steps} points per step.`,
         choices: shuffleUnique([gain / steps, gain, steps, gain / steps + 2], rng).map((v) => `${v} points`)
@@ -2397,7 +3102,7 @@ function overflowQuestionFor(
       const a = int(3, 9);
       const b = 4 + (k % 5);
       return {
-        text: `A ${theme} squad earns ${a} points in each of ${b} challenges. How many points in all? Show your setup.`,
+        text: `A team working on ${theme} earns ${a} points in each of ${b} challenges. How many points in all? Show your setup.`,
         answer: `${a * b} points.`,
         explanation: `There are ${b} equal groups of ${a}, so ${a} x ${b} = ${a * b}.`,
         choices: shuffleUnique([a * b, a * b - a, a * b + b, a + b], rng).map((v) => String(v))
@@ -2409,7 +3114,7 @@ function overflowQuestionFor(
       const cost = p * q;
       const bill = (Math.floor(cost / 10) + 1) * 10;
       return {
-        text: `A ${theme} pass costs $${p}. How much do ${q} passes cost, and what is the change from $${bill}?`,
+        text: `A pass for a ${theme} event costs $${p}. How much do ${q} passes cost, and what is the change from $${bill}?`,
         answer: `$${cost}, with $${bill - cost} change.`,
         explanation: `${q} x ${p} = ${cost} dollars, and ${bill} - ${cost} = ${bill - cost} dollars left.`,
         choices: shuffleUnique([cost, cost + p, cost - p, cost + q], rng).map((v) => `$${v}`)
@@ -2419,7 +3124,7 @@ function overflowQuestionFor(
       const s = [30, 40, 50, 60, 80][k % 5];
       const h = int(3, 6);
       return {
-        text: `A ${theme} journey covers ${s * h} km at ${s} km each hour. How many hours does it take? Show your work.`,
+        text: `A journey connected to ${theme} covers ${s * h} km at ${s} km each hour. How many hours does it take? Show your work.`,
         answer: `${h} hours.`,
         explanation: `Divide distance by speed: ${s * h} / ${s} = ${h}.`,
         choices: shuffleUnique([h, h + 1, h - 1, h + 2], rng).map((v) => `${v} hours`)
@@ -2428,7 +3133,7 @@ function overflowQuestionFor(
     const m = 4 + (k % 5);
     const per = int(5, 9);
     return {
-      text: `A ${theme} session lasts ${m * per} minutes, split equally among ${m} activities. How many minutes does each activity get?`,
+      text: `A session about ${theme} lasts ${m * per} minutes, split equally among ${m} activities. How many minutes does each activity get?`,
       answer: `${per} minutes.`,
       explanation: `Divide the total time by the activities: ${m * per} / ${m} = ${per}.`,
       choices: shuffleUnique([per, per + 2, per - 1, per + m], rng).map((v) => `${v} minutes`)
@@ -2768,6 +3473,14 @@ function fallbackQuestionBanks(args: {
 }): Record<string, string[]> {
   const { high, middle, history, theme, vocabWords } = args;
   const books = isBooksTheme(theme);
+  const art = isArtTheme(theme);
+  const technology = isTechnologyTheme(theme);
+  const sports = isSportsTheme(theme);
+  const music = isMusicTheme(theme);
+  const cooking = isCookingTheme(theme);
+  const nature = isNatureTheme(theme);
+  const lens = interestLensFor(theme);
+  const topic = themePhrase(theme);
 
   const reading = history && high
     ? [
@@ -2796,6 +3509,60 @@ function fallbackQuestionBanks(args: {
             "What question does Maya still have at the end of the passage?",
             "Write one sentence explaining how the community changed."
           ]
+        : cooking && high
+          ? [
+              "Which statement best captures the culinary design problem?",
+              "Why does the team define several success criteria before testing?",
+              "How does changing one recipe variable at a time improve the evidence?",
+              "What trade-off prevents the highest flavor score or lowest cost from automatically winning?",
+              "Which evidence best supports the final recipe or waste-reduction proposal?",
+              "How does the conclusion define rigorous culinary creativity?"
+            ]
+        : nature && high
+          ? [
+              "Which statement best captures the ecological or management problem?",
+              "Why is the original observation insufficient to identify one cause?",
+              "How does the sampling or comparison plan strengthen the evidence?",
+              "What overlapping variables or stakeholder trade-offs complicate the decision?",
+              "Which evidence best supports the recommended intervention?",
+              "How does the final paragraph define responsible environmental action?"
+            ]
+        : sports && high
+          ? [
+              "Which statement best captures the performance decision in the passage?",
+              "Why are match results or average times insufficient by themselves?",
+              "How does the proposed comparison improve the quality of the evidence?",
+              "What trade-off must the coach consider when choosing a training plan or athlete?",
+              "Which evidence best supports the final recommendation?",
+              "How does the final paragraph define responsible performance analysis?"
+            ]
+        : music && high
+          ? [
+              "Which statement best captures the musical decision in the passage?",
+              "How do acoustics or ensemble balance change what the listener perceives?",
+              "Why does the passage distinguish accurate execution from effective interpretation?",
+              "What trade-off appears between energy, clarity, precision, or density?",
+              "Which musical detail best supports the final arrangement or rehearsal decision?",
+              "How does the conclusion connect creative intention with evidence?"
+            ]
+        : technology && high
+          ? [
+              "Which statement best captures the design problem in the passage?",
+              "Why does the passage distinguish a visible symptom from its underlying cause?",
+              "How does the controlled experiment improve the team's decision?",
+              "What trade-off prevents the highest immediate score from automatically being the best design?",
+              "Which evidence best supports progressive support or the final engineering compromise?",
+              "How does the final paragraph define responsible technology or engineering?"
+            ]
+        : art && high
+          ? [
+              "Which statement best captures the museum or exhibition committee's central problem?",
+              "Choose two visual details from the passage and explain how they support a specific interpretation.",
+              "Why does the passage distinguish personal preference from an evidence-based visual claim?",
+              "How do audience and historical context complicate the curatorial decision?",
+              "Which proposed decision best acknowledges both the artwork's value and the limits of the available evidence?",
+              "How does the final paragraph define responsible curatorial judgment?"
+            ]
         : books && high
           ? [
               "Which statement best captures the central claim of the passage about reading and evidence?",
@@ -2834,12 +3601,12 @@ function fallbackQuestionBanks(args: {
               ]
             : high
     ? [
-        "Which statement best captures the central claim of the passage?",
-        `Which detail from the passage best shows why ${theme} needs checkable evidence instead of a quick guess?`,
-        "Why does the group build an evidence board before choosing an answer?",
-        "What mistake does the passage warn against when a learner feels confident?",
-        "What should a strong advanced response include after it states a claim?",
-        "How does the final paragraph explain why repeated worksheets should feel different?"
+        `Which statement best captures the ${lens.role}'s central design problem?`,
+        `Why does the team define audience, constraints, and evidence before creating the ${lens.artifact}?`,
+        "What trade-off appears among the three proposed options?",
+        "How does using the same criteria improve the fairness of the decision?",
+        "Why does the team invite a skeptical review before finalizing its work?",
+        `How does the final paragraph define advanced work with ${topic}?`
       ]
     : [
         `What is the main idea of the passage about ${theme}? Point to the sentence that proves it.`,
@@ -2854,14 +3621,77 @@ function fallbackQuestionBanks(args: {
     (word) => `Use ${word[0]} in a precise sentence connected to ${theme}, then explain which clue helped you understand it.`
   );
 
-  const grammar = [
+  const grammar = cooking && high
+    ? [
+        "Revise for precision: \"Batch C was better because it worked better.\"",
+        "Combine using a semicolon or subordinating conjunction: \"Batch B had the best flavor. Its center was gummy.\"",
+        "Rewrite with appropriate caution: \"The tasting proves fruit puree is the best egg replacement.\"",
+        "Edit for parallel structure: \"The team measured cost, rating texture, and whether the muffins stayed moist.\"",
+        "Write a concise recipe-development claim naming a criterion, result, and limitation.",
+        "Write a two-sentence counterargument to choosing the cheapest acceptable recipe."
+      ]
+    : nature && high
+      ? [
+          "Revise for precision: \"The stream is unhealthy because the water is bad.\"",
+          "Combine using a semicolon or subordinating conjunction: \"Turbidity rose after rainfall. Dissolved oxygen was already low in warm pools.\"",
+          "Rewrite with appropriate caution: \"Construction proves it caused every insect decline.\"",
+          "Edit for parallel structure: \"The team measured temperature, recording turbidity, and to identify insects.\"",
+          "Write a concise ecological claim naming a pattern, evidence, and uncertainty.",
+          "Write a two-sentence counterargument to closing the entire habitat."
+        ]
+    : sports && high
+    ? [
+        "Revise for precision: \"The athlete played badly because they were tired.\"",
+        "Combine using a semicolon or subordinating conjunction: \"Training volume decreased. Late-session accuracy improved.\"",
+        "Rewrite with appropriate caution: \"The recovery plan proves every athlete should train less.\"",
+        "Edit for parallel structure: \"The staff measured sprint speed, recording sleep, and how accurately players passed.\"",
+        "Write a concise performance claim that names a measure, comparison, and limitation.",
+        "Write a two-sentence counterargument to selecting an athlete using average performance alone."
+      ]
+    : music && high
+      ? [
+          "Revise for precision: \"The arrangement sounded better because it had better sound.\"",
+          "Combine using a semicolon or subordinating conjunction: \"Version B was clearer. Some listeners preferred Version A.\"",
+          "Rewrite with appropriate caution: \"The listener survey proves the sparse arrangement is the best music.\"",
+          "Edit for parallel structure: \"The producer adjusted the tempo, changing dynamics, and to reduce the bass.\"",
+          "Write a concise interpretation connecting one musical element to an effect on the listener.",
+          "Write a two-sentence counterargument to making every instrument equally prominent."
+        ]
+    : technology && high
+    ? [
+        "Revise for precision: \"The game was bad because the controls were bad.\"",
+        "Combine using a semicolon or subordinating conjunction: \"The tutorial improved completion. It increased the mission time.\"",
+        "Rewrite with appropriate caution: \"The new interface proves every player will learn faster.\"",
+        "Edit for parallel structure: \"The team measured completion, recording errors, and whether players understood the system.\"",
+        "Write a concise design claim that names a user need, a feature, and the expected effect.",
+        "Write a two-sentence counterargument to optimizing only for speed or completion."
+      ]
+    : art && high
+    ? [
+        "Revise this sentence to remove vague language: \"The artwork is powerful because it has powerful colors.\"",
+        "Combine these ideas using a semicolon or subordinating conjunction: \"The mural is damaged. Its composition remains legible.\"",
+        "Rewrite this claim with appropriate academic caution: \"The red line definitely proves the artist was angry.\"",
+        "Edit for parallel structure: \"The curator wants to stabilize the paint, documenting the damage, and to consult residents.\"",
+        "Write a precise thesis explaining how one visual element shapes meaning in the passage's artwork.",
+        "Write a two-sentence counterargument to a restoration proposal, then concede one strength of that proposal."
+      ]
+    : high
+      ? [
+          `Revise for precision: "The ${topic} project was good because it worked well."`,
+          `Combine using a semicolon or subordinating conjunction: "The ${lens.artifact} was easy to understand. It left out an important limitation."`,
+          `Rewrite with appropriate caution: "The first result proves this is the best way to approach ${topic}."`,
+          `Edit for parallel structure: "The team compared costs, measuring outcomes, and to interview users."`,
+          `Write a concise claim naming one criterion, one piece of evidence, and one limitation for the ${lens.artifact}.`,
+          `Write a two-sentence counterargument to the team's preferred ${topic} proposal.`
+        ]
+    : [
     `Rewrite as two correct sentences: "the ${theme} team trained hard they were ready".`,
     `Combine into one clear sentence: "The plan was simple. The plan worked."`,
     `Rewrite so it is clearer: "Due to the fact that practice happened, improvement occurred."`,
     `Add a strong adjective and adverb: "The learner solved the problem."`,
     `Write one sentence about ${theme} that uses a comma correctly.`,
     `Choose and explain: "Their / There / They're going to practice ${theme} today."`
-  ];
+      ];
 
   const math = history && high
     ? [
@@ -2908,29 +3738,141 @@ function fallbackQuestionBanks(args: {
           "A class reads 12 source cards on Monday and 15 on Tuesday. How many source cards did they read in all?",
           "There are 30 minutes for 5 history stations. How many minutes can each station take?"
       ]
+    : cooking && high
+    ? [
+        "A recipe yields 18 muffins using 540 grams of flour. How much flour is needed for 50 muffins at the same ratio?",
+        "A batch costs $13.68 and yields 24 portions. If packaging costs $0.11 per portion, what is the total cost per packaged portion?",
+        "A waste audit records 18.4 kg before changes and 12.1 kg after. What is the percent reduction?",
+        "A formula is 62 percent flour, 38 percent water by combined mass. If the total is 1,250 grams, find each mass.",
+        "In a blinded test, Batch C receives scores 7, 8, 8, 9, 6, 8, 9, and 7. Find the mean and range."
+      ]
+    : nature && high
+      ? [
+        "Indicator-species counts at four sites are 24, 18, 11, and 7. What percent lower is the fourth site than the first?",
+        "A reserve's nesting success rises from 42 of 70 nests to 57 of 75. Compare the success rates in percentage points.",
+        "A stream-monitoring team samples 6 sites monthly for 18 months and takes 4 measurements per visit. How many site-measurements are collected?",
+        "A population grows from 1,250 to 1,475, then falls to 1,298. Find the percent increase and the percent decrease.",
+        "A random sample finds 36 invasive plants in 15 plots averaging 8 square meters each. Estimate the density per 100 square meters."
+      ]
+    : sports && high
+    ? [
+        "An athlete's late-session passing accuracy rises from 64 percent to 78 percent. What is the relative percent increase?",
+        "A runner completes six intervals in seconds: 72, 71, 73, 70, 72, 86. Find the mean and identify how the outlier affects it.",
+        "A swimmer's five race times are 54.2, 54.5, 54.3, 54.4, and 54.1 seconds. Find the range and mean.",
+        "A training plan reduces weekly volume from 420 to 350 minutes while high-intensity distance falls only from 9.0 to 8.7 km. Find both percent changes.",
+        "A team wins 18 of 30 matches before a tactical change and 14 of 20 afterward. Compare the win rates in percentage points."
+      ]
+    : music && high
+      ? [
+          "A song at 96 beats per minute contains 64 measures of 4 beats. How long is the song in minutes and seconds?",
+          "A producer reduces a track from 48 audio layers to 34. What is the percent reduction?",
+          "In a listener test, 126 of 180 listeners rate Version B clearer, while 99 rate Version A more exciting. What percentage chose each description?",
+          "A four-note motif lasts 1.5 seconds and appears 12 times. What total duration does the motif occupy, and what fraction of a 3-minute piece is that?",
+          "A concert hall's sound level drops from 92 dB near the stage to 80 dB at the back. Using a 10 dB drop as roughly one-tenth the intensity, approximately what fraction of the original intensity remains after a 12 dB drop?"
+        ]
+    : technology && high
+    ? [
+        "A game tutorial raises mission completion from 58 percent to 81 percent. What is the relative percent increase in completion?",
+        "A robot's route takes 150 seconds. A revised speed setting adds 18 seconds but increases battery life from 40 to 52.4 minutes. Find the percent increase in battery life and the percent increase in route time.",
+        "A server processes 2,400 requests per minute. Optimization reduces processing time per request by 15 percent. Assuming capacity changes inversely with processing time, estimate the new requests-per-minute capacity.",
+        "In an A/B test, 126 of 180 users complete version A and 144 of 180 complete version B. What is the difference in completion rates in percentage points?",
+        "A robot travels 24 meters using 18 watt-hours. At the same efficiency, how many watt-hours would it need for a 70-meter route?"
+      ]
+    : art && high
+    ? [
+        "A mural is 8.4 meters wide and a digital reproduction uses a 1:20 scale. How wide should the reproduction be in centimeters?",
+        "A conservation project has a $18,500 budget. Imaging costs $3,200, stabilization costs $7,850, and documentation costs $2,450. What percentage of the budget remains?",
+        "A visitor survey found that 168 of 240 visitors preferred limited conservation over full restoration. Construct a 95 percent confidence interval using p +/- 2 times the square root of p(1-p)/n, and interpret it.",
+        "A pigment sample loses 12 percent of its measured brightness every decade. If its current brightness index is 80, what will the model predict after two decades? Round to the nearest tenth.",
+        "A rectangular frame measures 90 cm by 70 cm, with an artwork opening measuring 72 cm by 52 cm. What area of mat board remains visible?"
+      ]
     : high
     ? [
-        `A ${theme} practice log shows 42 of 60 tasks completed accurately in week one and improves the success rate by 15 percentage points in week two. What is the week two success rate?`,
-        `A ${theme} showcase has a budget of $360. Setup kits cost $18 each and display panels cost $24 each. If the group buys 8 setup kits, how many panels can it buy with the remaining budget?`,
-        `The function f(x) = 3x + 7 models points earned after x completed ${theme} analysis tasks. If f(x) = 52, what is x?`,
-        `A ${theme} study table shows practice time rising from 20 to 50 minutes while accuracy rises from 68 percent to 83 percent. What is the average accuracy gain per 10 minutes?`
+        `A ${lens.artifact} has a $2,400 budget. Research uses 18 percent, materials use 37 percent, and testing uses 22 percent. How many dollars remain?`,
+        `In a review of 160 users, 116 understand the first ${topic} proposal and 132 understand the revised version. Compare the comprehension rates in percentage points.`,
+        `Three ${topic} prototypes receive scores of 72, 84, and 78 across four equally weighted criteria. A fifth criterion worth twice as much gives scores of 90, 65, and 82. Which prototype has the highest weighted average?`,
+        `A process takes 48 minutes. A revision reduces the time by 17.5 percent while preserving the same outcome. What is the new time?`,
+        `A sample of 250 observations includes 42 exceptions. What percentage are exceptions, and why should the team report them rather than remove them?`
       ]
     : [
-        `A ${theme} team scores 4 points in each of 6 rounds. How many points in all? Show your setup.`,
+        `A team practicing ${theme} scores 4 points in each of 6 rounds. How many points in all? Show your setup.`,
         "A pattern goes 3, 6, 12, 24, ___, ___. What are the next two numbers, and what is the rule?",
-        `A ${theme} trip is 240 km. If you travel 60 km each hour, how many hours will it take? Show your work.`,
+        `A trip connected to ${theme} is 240 km. If you travel 60 km each hour, how many hours will it take? Show your work.`,
         "A ticket costs $8. How much do 7 tickets cost? Then find the change you get back from $60.",
         "There are 30 minutes for 5 equal activities. How many minutes can each one take?"
       ];
 
-  const science = [
+  const science = cooking && high
+    ? [
+        "Design a controlled recipe test for one egg substitute. Identify the independent variable, two outcome measures, and three controls.",
+        "Why should tasters be blinded to the prototype identities?",
+        "A batch is moist immediately after baking. Give two reasons this does not prove it will remain acceptable after four hours.",
+        "Explain how oven temperature variation could confound a comparison between recipe prototypes.",
+        "Propose one objective texture measurement and explain what sensory quality it cannot capture.",
+        "Distinguish food safety from food quality using an example from the passage."
+      ]
+    : nature && high
+      ? [
+          "Design a sampling plan that tests one possible cause of the ecological change. Name the independent comparison, two outcomes, and two controls.",
+          "Why should researchers include sites above and below the suspected disturbance?",
+          "Species diversity is lower at one site. Give two alternative explanations besides pollution.",
+          "Explain how rainfall could confound a comparison of turbidity between locations.",
+          "Propose one useful indicator species or environmental measure and state its limitation.",
+          "Distinguish correlation from causation using one relationship in the passage."
+        ]
+    : sports && high
+    ? [
+        "Design a controlled comparison of two recovery routines. Identify the independent variable, two outcome measures, and two controls.",
+        "Why should a coach avoid changing training volume, sleep routine, and nutrition simultaneously during a trial?",
+        "A team performs better after a lighter week. Give two alternative explanations besides lower volume causing the improvement.",
+        "Explain how opponent strength could confound a comparison of match performance before and after a tactical change.",
+        "Propose one measure of fatigue that complements athlete self-report and explain its limitation.",
+        "Distinguish correlation from causation using training load and injury data."
+      ]
+    : music && high
+      ? [
+          "Design a controlled listening test comparing two arrangements. Identify the independent variable, two response measures, and two controls.",
+          "Why should the producer change only one major element between test mixes?",
+          "Listeners prefer one mix in a classroom. Give two reasons this may not predict preference in an auditorium.",
+          "Explain how playback volume could confound a comparison of two arrangements.",
+          "Propose one objective acoustic measurement and explain what it cannot reveal about musical quality.",
+          "Distinguish correlation from causation using rehearsal time and performance ratings."
+        ]
+    : technology && high
+    ? [
+        "Design a controlled usability test for one interface change. Identify the independent variable, two dependent measures, and two controls.",
+        "Why should the robotics team change only one hardware or software variable per trial?",
+        "A new feature improves scores in one session. Give two alternative explanations besides the feature causing better learning.",
+        "Explain how device performance could confound a comparison of two game interfaces.",
+        "Propose one measure of long-term mastery that is stronger than immediate mission completion.",
+        "Distinguish correlation from causation using one result from the passage."
+      ]
+    : art && high
+    ? [
+        "Design a controlled test comparing how direct light and filtered light affect pigment fading. Identify the independent variable, dependent variable, and two controls.",
+        "Why would a conservator test cleaning solvent on a tiny hidden area before treating the whole mural?",
+        "A cleaned test patch appears brighter after one day. Give two reasons this is not yet enough evidence that the treatment is safe.",
+        "Explain how humidity could act as a confounding variable in a pigment-aging experiment.",
+        "Propose one non-destructive measurement that could track deterioration over time and explain what data it would produce.",
+        "Distinguish conservation from restoration using one scientific or ethical consideration from the passage."
+      ]
+    : high
+      ? [
+          `Design a controlled test for one feature of the ${lens.artifact}. Identify the variable changed, two outcomes, and two controls.`,
+          `Why should the ${lens.role} revise one major feature at a time?`,
+          `The revised ${lens.artifact} receives a better rating. Give two alternative explanations besides the revision causing the improvement.`,
+          `Explain one confounding variable that could distort a comparison of two ${topic} options.`,
+          `Propose one objective measure and one audience-response measure for the ${lens.artifact}.`,
+          `Distinguish correlation from causation using a plausible ${topic} result.`
+        ]
+    : [
     `Name one thing you would observe first when testing an idea about ${theme}, and why.`,
     "A test works better the second time. Give two reasons that are NOT proof the change caused it.",
     `Design a simple fair test for a ${theme} question. What stays the same and what changes?`,
     `What is the difference between a guess and a hypothesis in a ${theme} experiment?`,
     "If results go up each trial, what evidence would make you sure the change caused it?",
     `Describe one cause-and-effect you might see while exploring ${theme}.`
-  ];
+      ];
 
   const social = history && high
     ? [
@@ -2954,6 +3896,21 @@ function fallbackQuestionBanks(args: {
             "Why might two families feel differently about the same town change?",
             "Draw or write a three-event timeline from the passage."
           ]
+        : art && high
+          ? [
+              "Explain how the mural's original transit-station setting changes the way a museum should interpret it.",
+              "Whose perspectives should be represented before the museum alters a public artwork, and why?",
+              "Write a claim about whether public ownership gives a community special authority over conservation decisions.",
+              "How can patronage influence which artworks are preserved, displayed, or forgotten?",
+              "Name one source that could clarify the artwork's historical context and explain its limitation."
+            ]
+        : high
+          ? [
+              `Identify two groups affected by a ${topic} proposal and explain why their priorities may differ.`,
+              `Name one historical, cultural, or community source that would improve the ${lens.artifact}.`,
+              `Write a fair rule for making the ${topic} decision and explain whose voice could otherwise be missed.`,
+              `Explain how cost, access, or tradition could change which ${topic} option seems best.`
+            ]
         : [
             `Name one way ${theme} (or an interest like it) could change life in a town, and who it helps.`,
             "A leader and an invention both change a city. What evidence shows which mattered more?",
@@ -2961,12 +3918,54 @@ function fallbackQuestionBanks(args: {
             `Describe one fair rule a ${theme} club should make, and why.`
           ];
 
-  const logic = high
+  const logic = cooking && high
     ? [
-        "A chart shows two study plans. Plan A has higher average scores, but Plan B has steadier scores. Which plan would you recommend before a high-stakes test, and why?",
-        "A historian argues that one invention changed a city more than any leader did. What evidence would make that claim stronger?",
-        "Decode the rule: 2, 5, 11, 23, 47. What comes next, and what is the rule?",
-        `Write a two-sentence argument explaining how an interest in ${theme} can build academic persistence.`
+        "A chef argues, \"Batch B had the highest flavor score, so it is the best recipe.\" Identify the reasoning flaw and propose a better decision rule.",
+        "Rank safety, taste, texture, cost, and sustainability for the passage's product. Defend your top two.",
+        "If every safe batch meets the allergen protocol, and Batch D failed the protocol, what can and cannot be concluded?",
+        "Construct a decision rule for keeping, revising, or rejecting a prototype."
+      ]
+    : nature && high
+      ? [
+          "A manager argues, \"Insect diversity fell where turbidity was high, so sediment is the only cause.\" Identify the reasoning flaw and propose stronger evidence.",
+          "Rank biodiversity, public access, cost, and community trust for the habitat decision. Defend your top two.",
+          "If every resilient wetland recovers after ordinary storms, and this wetland did not recover, what can and cannot be concluded?",
+          "Construct a decision rule for maintaining, expanding, or ending an environmental intervention."
+        ]
+    : sports && high
+    ? [
+        "A coach argues, \"The team won after the new training plan, so the plan caused the win.\" Identify the reasoning flaw and propose stronger evidence.",
+        "Rank peak performance, consistency, recovery, and tactical fit for selecting a relay or starting lineup. Defend your top two.",
+        "If every overtrained athlete shows declining recovery scores, and one athlete's recovery score is declining, what can and cannot be concluded?",
+        "Construct a decision rule for increasing, maintaining, or reducing training load."
+      ]
+    : music && high
+      ? [
+          "A producer argues, \"Most listeners preferred the louder mix, so louder is musically better.\" Identify the reasoning flaw and propose stronger evidence.",
+          "Rank clarity, emotional impact, performer comfort, and audience energy for choosing an arrangement. Defend your top two.",
+          "If every effective arrangement preserves the melody's focal role, and this arrangement hides the melody, what can and cannot be concluded?",
+          "Construct a decision rule for keeping, revising, or removing a musical layer."
+        ]
+    : technology && high
+    ? [
+        "A team concludes, \"Players who stayed longer learned more, so longer play caused the learning.\" Identify the reasoning flaw and propose a better test.",
+        "Rank accessibility, learning retention, speed, and visual polish for the passage's product. Defend your top two criteria.",
+        "If every reliable release passes the regression suite, and this release failed the suite, what can and cannot be concluded?",
+        "Construct a decision rule for choosing whether to ship, revise, or remove a feature."
+      ]
+    : art && high
+    ? [
+        "A curator argues: \"Most surveyed visitors prefer restoration, so full restoration is ethically correct.\" Identify the reasoning flaw and name one additional kind of evidence needed.",
+        "Rank these criteria for an exhibition entrance image: immediate attention, historical significance, visual coherence, and community relevance. Defend the trade-off in your top two.",
+        "If every authentic restoration preserves original material, and this proposal replaces original material, what can and cannot be concluded about the proposal?",
+        "Construct a decision rule that would help a committee choose between conservation, restoration, and reinterpretation without relying only on taste."
+      ]
+    : high
+    ? [
+        `A reviewer says, "Most people preferred Option A, so it is the best ${topic} choice." Identify the flaw and name one missing criterion.`,
+        `Rank clarity, accuracy, cost, and audience usefulness for the ${lens.artifact}. Defend your top two.`,
+        `If every successful ${lens.artifact} meets the audience goal, and this version misses the audience goal, what can and cannot be concluded?`,
+        `Construct a decision rule for keeping, revising, or rejecting a ${topic} proposal.`
       ]
     : [
         "Continue the pattern and say the rule in words: 5, 8, 11, 14, ___, ___.",
@@ -2983,13 +3982,69 @@ function fallbackQuestionBanks(args: {
         "Name one missing source that would make the passage's school-expansion case more complete.",
         "Write a two-sentence thesis that uses causation, evidence, and limitation."
       ]
+    : cooking && high
+      ? [
+          "Write a product recommendation citing two results and acknowledging one trade-off.",
+          "Compare optimizing one sensory score with satisfying a multi-criteria design brief.",
+          "Explain why precise measurement can support rather than limit culinary creativity.",
+          "Challenge one assumption in the passage and propose a test.",
+          "Write a concise menu or product note that communicates ingredients, purpose, and an honest limitation."
+        ]
+    : nature && high
+      ? [
+          "Write an intervention recommendation citing two observations and acknowledging one uncertainty.",
+          "Compare acting quickly with waiting for stronger ecological evidence.",
+          "Explain why biodiversity can matter beyond simply counting species.",
+          "Challenge one causal assumption in the passage and propose a field comparison.",
+          "Write a concise public notice explaining the action, evidence, trade-off, and review threshold."
+        ]
+    : sports && high
+      ? [
+          "Write a coaching recommendation that cites two data points and acknowledges one uncertainty.",
+          "Compare maximizing peak performance with maximizing reliable performance.",
+          "Explain why harder training does not automatically create better adaptation.",
+          "Challenge one assumption in the passage and propose evidence that would test it.",
+          "Write a concise athlete briefing that explains the plan, purpose, success measure, and recovery expectation."
+        ]
+    : music && high
+      ? [
+          "Write an arrangement recommendation that cites two musical or acoustic details and acknowledges one trade-off.",
+          "Compare technical accuracy with expressive interpretation.",
+          "Explain how the same motif can communicate differently through timbre or dynamics.",
+          "Challenge one production assumption in the passage and propose a listening test.",
+          "Write a concise program note that describes the musical idea without telling the audience what to feel."
+        ]
+    : technology && high
+      ? [
+          "Write a product recommendation that cites two data points and acknowledges one trade-off.",
+          "Compare optimizing for immediate completion with optimizing for long-term mastery.",
+          "Explain why more automation does not always create a better human experience.",
+          "Challenge one design assumption in the passage and propose evidence that would test it.",
+          "Write a concise release note that explains the change, expected benefit, known limitation, and measurement plan."
+        ]
+    : art && high
+      ? [
+          "Write a curatorial recommendation that makes a clear claim, cites two details from the passage, and acknowledges one trade-off.",
+          "Compare conservation and restoration. Which better respects authenticity in this case, and how are you defining authenticity?",
+          "Explain how the meaning of an artwork can change when it moves from a public station to a museum.",
+          "Challenge one interpretation of the red line or selected photograph by offering a plausible alternative supported by visual evidence.",
+          "Design a short exhibition label that informs visitors without telling them what they must think."
+        ]
+    : high
+      ? [
+          `Write a recommendation for the ${lens.artifact} using two pieces of evidence and one acknowledged trade-off.`,
+          `Compare making the ${lens.artifact} simpler with making it more complete.`,
+          `Explain why an authentic audience changes how the ${lens.role} should work.`,
+          `Challenge one assumption about ${topic} and propose evidence that would test it.`,
+          `Write a concise final brief naming the purpose, recommendation, limitation, and next measurement.`
+        ]
     : [
-    `Explain one way ${theme} can build careful reading and evidence habits.`,
-    `Write a short plan to get better at ${theme} using practice and feedback.`,
-    `Compare two strategies a ${theme} learner could use, and say which is stronger and why.`,
-    `Describe one mistake a ${theme} learner might make, and how to fix it using evidence.`,
-    `Set one measurable ${theme} goal and explain how you would check progress with numbers.`
-  ];
+        `Explain one way ${theme} can build careful reading and evidence habits.`,
+        `Write a short plan to get better at ${theme} using practice and feedback.`,
+        `Compare two strategies a ${theme} learner could use, and say which is stronger and why.`,
+        `Describe one mistake a ${theme} learner might make, and how to fix it using evidence.`,
+        `Set one measurable ${theme} goal and explain how you would check progress with numbers.`
+      ];
 
   return {
     "Reading Comprehension": reading,
@@ -3084,10 +4139,22 @@ function learnerFriendlyMissionCopy(input: WorksheetInput, blueprint: LearningBl
   }
 
   if (middle) {
-    return `This mission uses ${interests} to build stronger reading, reasoning, and explanation habits. The goal is steady focus: use evidence, show the setup, and learn from each check.`;
+    const tone = input.goal === "catching-up"
+      ? "Start with the clearest wins, use each hint, and notice the progress you make."
+      : input.goal === "getting-ahead"
+        ? "Expect real choices, deeper reasoning, and a final challenge that rewards original thinking."
+        : "Use evidence, show the setup, and build momentum one checkpoint at a time.";
+    return `This mission uses ${interests} to build stronger reading, reasoning, and explanation habits. ${tone}`;
   }
 
-  return `This mission uses ${interests} as context for rigorous practice: evidence-based reading, precise vocabulary, quantitative reasoning, and clear explanations under test-like pressure. ${blueprint.motivationStrategy}`;
+  const purpose = input.goal === "test-prep"
+    ? "Practice evidence-based reading, precise vocabulary, quantitative reasoning, and calm decisions under test-like pressure."
+    : input.goal === "catching-up"
+      ? "Build confidence through clear starting points, guided practice, and visible evidence of improvement."
+      : input.goal === "getting-ahead"
+        ? "Work through authentic, advanced problems that require judgment, evidence, and original thinking."
+        : "Practice evidence-based reading, precise vocabulary, quantitative reasoning, and clear explanation through authentic problems.";
+  return `This mission treats ${interests} as a serious field of study. ${purpose} ${blueprint.motivationStrategy}`;
 }
 
 function strategyBlockFor(input: WorksheetInput, blueprint: LearningBlueprint): { title: string; html: string } {
@@ -3376,6 +4443,11 @@ function funZoneBlock(input: WorksheetInput, theme: string, run: WorksheetRun): 
 
   if (high) {
     const history = isHistoryTheme(theme);
+    const art = isArtTheme(theme);
+    const sports = isSportsTheme(theme);
+    const music = isMusicTheme(theme);
+    const cooking = isCookingTheme(theme);
+    const nature = isNatureTheme(theme);
     const challenges: FunActivity[] = history
       ? [
           {
@@ -3391,12 +4463,93 @@ function funZoneBlock(input: WorksheetInput, theme: string, run: WorksheetRun): 
             answer: "Sample: Student attendance records could show whether the reform reached the children it claimed to help."
           }
         ]
+      : art
+        ? [
+            {
+              html: `<p><strong>Curator's Decision.</strong> Choose conservation, restoration, or reinterpretation for the artwork in the passage.</p><p>Write a recommendation using two visual or contextual details and one acknowledged trade-off.</p><div class="write"></div>`,
+              answer: "Sample: Choose limited conservation because it protects original material and preserves evidence of age; the trade-off is that some original colors remain difficult to see."
+            },
+            {
+              html: `<p><strong>Visual Evidence Challenge.</strong> Sketch a simple composition using one focal point, one repeated shape, and one diagonal line.</p><p>Then annotate how each choice directs the viewer's attention.</p><div class="write"></div>`,
+              answer: "Answers vary. A strong response labels the focal point and explains how repetition creates rhythm while the diagonal creates movement or tension."
+            },
+            {
+              html: `<p><strong>Exhibition Label.</strong> Write a 60-word museum label that gives context without ordering the viewer to accept one interpretation.</p><p class="hint">Include what is visible, one relevant fact, and one open question.</p><div class="write"></div>`,
+              answer: "A strong label describes visible evidence, supplies concise historical context, and invites interpretation with neutral language rather than declaring a single meaning."
+            }
+          ]
+      : sports
+        ? [
+            {
+              html: `<p><strong>Coach's Decision.</strong> Choose one change to training load, recovery, or tactics.</p><p>Defend it using two measures and state what result would make you reverse the decision.</p><div class="write"></div>`,
+              answer: "A strong answer cites two relevant performance or recovery measures and names a clear stop or revision condition."
+            },
+            {
+              html: `<p><strong>Pressure Scenario.</strong> Design a final-minute decision drill connected to ${escapeHtml(theme)}.</p><p>State the cue, two options, and the evidence that reveals the better choice.</p><div class="write"></div>`,
+              answer: "Answers vary. The drill should require reading a realistic cue, choosing between plausible options, and explaining the decision rather than relying on speed alone."
+            },
+            {
+              html: `<p><strong>Performance Dashboard.</strong> Choose four measures for a one-page athlete dashboard.</p><p>Explain why each measure matters and one way it could be misleading.</p><div class="write"></div>`,
+              answer: "Strong dashboards combine outcome, process, load, and recovery measures and explain the limitation of each number."
+            }
+          ]
+      : music
+        ? [
+            {
+              html: `<p><strong>Producer's Decision.</strong> Choose one element to change: rhythm, timbre, dynamics, texture, or form.</p><p>Predict the listener effect and name evidence that would test your prediction.</p><div class="write"></div>`,
+              answer: "A strong answer connects a specific musical change to a predicted effect and proposes a controlled listening comparison."
+            },
+            {
+              html: `<p><strong>Motif Lab.</strong> Write or describe a four-note motif, then create two transformations using rhythm, register, or timbre.</p><div class="write"></div>`,
+              answer: "Answers vary. Each transformation should preserve a recognizable relationship to the motif while changing one named musical dimension."
+            },
+            {
+              html: `<p><strong>Program Note.</strong> Write 60 words that help an audience notice the piece's structure without telling them what emotion they must feel.</p><div class="write"></div>`,
+              answer: "A strong note names audible features and form using inviting, neutral language rather than prescribing one reaction."
+            }
+          ]
+      : cooking
+        ? [
+            {
+              html: `<p><strong>Test Kitchen Decision.</strong> Select one prototype and defend it using safety, sensory, cost, and stability evidence.</p><p>Name one trade-off and one follow-up test.</p><div class="write"></div>`,
+              answer: "A strong response chooses a prototype that meets every non-negotiable requirement, cites evidence across multiple criteria, and proposes a targeted next test."
+            },
+            {
+              html: `<p><strong>Ratio Lab.</strong> Design a 1,000-gram formula using three or more ingredients expressed as percentages.</p><p>Verify that the percentages and masses each total correctly.</p><div class="write"></div>`,
+              answer: "Answers vary. Ingredient percentages must total 100 percent and their gram masses must total 1,000 grams."
+            },
+            {
+              html: `<p><strong>Menu Story.</strong> Write a 60-word product description that is appealing, accurate, and transparent about one limitation or allergen consideration.</p><div class="write"></div>`,
+              answer: "A strong description communicates sensory appeal and purpose without hiding relevant safety or quality information."
+            }
+          ]
+      : nature
+        ? [
+            {
+              html: `<p><strong>Field Team Decision.</strong> Choose one intervention and support it with two observations.</p><p>State one uncertainty and the threshold that would make you revise the plan.</p><div class="write"></div>`,
+              answer: "A strong response connects the intervention to field evidence, acknowledges uncertainty, and gives a measurable review threshold."
+            },
+            {
+              html: `<p><strong>Sampling Map.</strong> Design six sampling locations that reduce bias.</p><p>Include reference and impacted sites, then explain what must stay consistent.</p><div class="write"></div>`,
+              answer: "Answers vary. Strong designs include comparable reference and impacted sites and standardize timing, effort, habitat, and measurement method."
+            },
+            {
+              html: `<p><strong>Public Brief.</strong> Write 60 words explaining the ecological action, evidence, trade-off, and monitoring plan to the community.</p><div class="write"></div>`,
+              answer: "A strong brief is specific, transparent about uncertainty and costs, and explains how future evidence can change the plan."
+            }
+          ]
       : [
-          patternPuzzleHard(rng),
-          logicDeduction(theme, rng),
           {
-            html: `<p><strong>Scholar Challenge.</strong> Write a two-sentence claim about ${escapeHtml(theme)}. Sentence 1 must make a claim; sentence 2 must name evidence that would test it.</p><div class="write"></div>`,
-            answer: "Strong answers make a specific claim and identify checkable evidence rather than opinion."
+            html: `<p><strong>Real-World Brief.</strong> Create a ${escapeHtml(interestLensFor(theme).artifact)} for a specific audience interested in ${escapeHtml(theme)}.</p><p>Name the audience, success criteria, evidence, and one constraint.</p><div class="write"></div>`,
+            answer: `A strong brief identifies a real audience, measurable success criteria, relevant evidence, and a meaningful constraint for the ${interestLensFor(theme).artifact}.`
+          },
+          {
+            html: `<p><strong>Trade-off Test.</strong> Compare two plausible ways to ${escapeHtml(interestLensFor(theme).action)} ${escapeHtml(theme)}.</p><p>Choose one, defend it, and state the evidence that would make you switch.</p><div class="write"></div>`,
+            answer: "A strong response compares both options against the same criteria and gives a clear revision condition."
+          },
+          {
+            html: `<p><strong>Make It Useful.</strong> Produce a short guide, label, pitch, map, demonstration plan, or recommendation connected to ${escapeHtml(theme)}.</p><p>It must help someone make a decision, not merely list facts.</p><div class="write"></div>`,
+            answer: "A strong product has a clear purpose, uses accurate evidence, and helps its audience understand or decide something."
           }
         ];
     const cards = challenges.map((a) => `<article class="card fun-card">${a.html}</article>`).join("");
