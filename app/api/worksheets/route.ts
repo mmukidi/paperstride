@@ -286,15 +286,18 @@ async function parseInput(request: NextRequest): Promise<{ input: WorksheetInput
   const goal         = VALID_GOALS.has(body.goal)           ? String(body.goal)         : "general";
   const timeAvailable = VALID_TIMES.has(Number(body.timeAvailable)) ? Number(body.timeAvailable) : 40;
 
-  // If the frontend already computed the blueprint (after showing the plan preview),
-  // pass it through so we skip the blueprint LLM call entirely.
-  const prebuiltBlueprint: LearningBlueprint | null =
-    body.blueprint && typeof body.blueprint === "object" ? (body.blueprint as LearningBlueprint) : null;
+  const input: WorksheetInput = { childName, grade, age, interests, strugglingWith, subjectFocus, goal, timeAvailable };
 
-  return {
-    input: { childName, grade, age, interests, strugglingWith, subjectFocus, goal, timeAvailable },
-    prebuiltBlueprint,
-  };
+  // If the frontend already computed the blueprint (after showing the plan preview),
+  // sanitize it and pass it through so we skip the blueprint LLM call entirely.
+  // honorUserPlan keeps the user's edited section counts instead of re-imposing
+  // grade-default bounds — the worksheet must match the plan they tuned.
+  const prebuiltBlueprint: LearningBlueprint | null =
+    body.blueprint && typeof body.blueprint === "object"
+      ? normalizeBlueprint(body.blueprint, input, true)
+      : null;
+
+  return { input, prebuiltBlueprint };
 }
 
 // One AI-authored question, returned as structured JSON so we render it into our own
@@ -929,7 +932,7 @@ function createFallbackHtmlWorksheet(input: WorksheetInput, blueprint: LearningB
   return injectNickname(createSampleHtmlWorksheet(input, blueprint, run), input.childName);
 }
 
-function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlueprint {
+function normalizeBlueprint(value: unknown, input: WorksheetInput, honorUserPlan = false): LearningBlueprint {
   const fallback = defaultBlueprint(input);
 
   if (!value || typeof value !== "object") {
@@ -937,7 +940,7 @@ function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlue
   }
 
   const candidate = value as Partial<LearningBlueprint>;
-  const sections = normalizeSections(candidate.sections, fallback.sections, input);
+  const sections = normalizeSections(candidate.sections, fallback.sections, input, honorUserPlan);
   const questionCount = sections.reduce((sum, section) => sum + section.questionCount, 0);
 
   // Preserve reading metadata (word count, topic, Lexile) so user edits from the
@@ -1223,7 +1226,12 @@ function questionCountBounds(input: WorksheetInput): { min: number; max: number 
   return { min: 16, max: MAX_TOTAL_QUESTIONS };
 }
 
-function normalizeSections(value: unknown, fallback: WorksheetSection[], input: WorksheetInput): WorksheetSection[] {
+function normalizeSections(
+  value: unknown,
+  fallback: WorksheetSection[],
+  input: WorksheetInput,
+  honorUserPlan = false
+): WorksheetSection[] {
   if (!Array.isArray(value)) {
     return fallback;
   }
@@ -1253,6 +1261,12 @@ function normalizeSections(value: unknown, fallback: WorksheetSection[], input: 
   }
 
   const sections = Array.from(bySubject.values());
+
+  // A user-edited plan from the studio is honoured as-is (the editor already bounds
+  // each section to sensible counts); only an empty/invalid plan falls back.
+  if (honorUserPlan) {
+    return sections.length ? sections : fallback;
+  }
 
   // Require at least two subjects and a sensible total; otherwise trust the default.
   const bounds = questionCountBounds(input);
@@ -1390,9 +1404,15 @@ function assembleWorksheet(
   const answerContext = { high, isSpace: isSpaceTheme, run };
   const plannedSections = blueprint.sections.length ? blueprint.sections : defaultSectionPlan(input);
   const strategyBlock = strategyBlockFor(input, blueprint);
+  // Honor the reading-length slider from the editable plan in the deterministic path
+  // too, not just the AI path — otherwise the printed passage ignores the user's edit.
+  const targetReadingWords = Math.max(
+    60,
+    Math.min(900, Math.round(blueprint.reading?.wordCount ?? qualityProfileFor(input).minReadingWords))
+  );
   const passage = content.passageHtml
     ? content.passageHtml
-    : fallbackPassageFor(input, theme, allInterests, run);
+    : fallbackPassageFor(input, theme, allInterests, run, targetReadingWords);
   const rawTheme = input.interests.split(",")[0]?.trim() || "your topic";
   const history = isHistoryTheme(rawTheme);
   const bankVocab = bankVocabFor(high, middle, rawTheme);
@@ -1427,9 +1447,23 @@ function assembleWorksheet(
   let runningNumber = 0;
   const fromBank = (subject: string, index: number): RenderQuestion => {
     const bank = banks[subject]?.length ? banks[subject] : banks["Critical Thinking"];
+    // Past the end of the bank, generate a seeded procedural question instead of
+    // repeating bank items verbatim — every question on the sheet stays unique.
+    if (index >= bank.length) {
+      const extra = overflowQuestionFor(subject, index - bank.length, theme, { high, middle, run });
+      return {
+        section: subject,
+        number: runningNumber,
+        promptHtml: escapeHtml(extra.text),
+        choices: (extra.choices ?? []).map(escapeHtml),
+        answerHtml: escapeHtml(extra.answer),
+        explanationHtml: escapeHtml(extra.explanation),
+        hint: questionHintFor({ section: subject })
+      };
+    }
     const fq: FallbackQuestion = {
       section: subject,
-      text: bank[index % bank.length],
+      text: bank[index],
       number: runningNumber,
       indexInSection: index
     };
@@ -1733,13 +1767,116 @@ function bankVocabFor(high: boolean, middle: boolean, theme: string): string[][]
   ];
 }
 
-function fallbackPassageFor(input: WorksheetInput, theme: string, interests: string, run: WorksheetRun): string {
+function fallbackPassageFor(
+  input: WorksheetInput,
+  theme: string,
+  interests: string,
+  run: WorksheetRun,
+  targetWords?: number
+): string {
   const high = isHighSchoolOrAdult(input);
   const middle = !high && input.age >= 11;
 
-  if (high) return highSchoolFallbackPassage(theme, run);
-  if (middle) return middleSchoolFallbackPassage(theme, interests, run);
-  return elementaryFallbackPassage(theme, interests, run);
+  const base = high
+    ? highSchoolFallbackPassage(theme, run)
+    : middle
+      ? middleSchoolFallbackPassage(theme, interests, run)
+      : elementaryFallbackPassage(theme, interests, run);
+
+  if (!targetWords) return base;
+  return fitPassageToWordTarget(base, targetWords, passageExtensionsFor(input, theme, interests, run));
+}
+
+function htmlWordCount(html: string): number {
+  return html.replace(/<[^>]+>/g, " ").trim().split(/\s+/).filter(Boolean).length;
+}
+
+// Fit a bank passage to the reading-length slider. Extensions are inserted BEFORE the
+// final paragraph so the original conclusion stays last ("final paragraph" questions in
+// the reading bank remain true). Trimming removes middle paragraphs only — the opening
+// two paragraphs (main idea) and the conclusion are always kept — and never drops the
+// passage below the target.
+function fitPassageToWordTarget(html: string, targetWords: number, extensions: string[]): string {
+  const paragraphs = html.match(/<p[\s\S]*?<\/p>/g);
+  if (!paragraphs || !paragraphs.length) return html;
+
+  const body = [...paragraphs];
+  let count = htmlWordCount(body.join(" "));
+
+  if (count < targetWords * 0.94) {
+    for (const extra of extensions) {
+      if (count >= targetWords * 0.94) break;
+      body.splice(body.length - 1, 0, `<p>${extra}</p>`);
+      count += htmlWordCount(extra);
+    }
+    return body.join("\n  ");
+  }
+
+  for (let i = body.length - 2; i >= 2 && body.length > 3; i--) {
+    const without = count - htmlWordCount(body[i]);
+    if (without >= targetWords) {
+      count = without;
+      body.splice(i, 1);
+    }
+  }
+  return body.join("\n  ");
+}
+
+// Band-appropriate continuation paragraphs used to honour a long reading-length target.
+// They are written as generic mission continuations so they follow any base passage in
+// the same band without contradicting it; numbers are seeded per worksheet so repeated
+// generations stay fresh.
+function passageExtensionsFor(
+  input: WorksheetInput,
+  theme: string,
+  interests: string,
+  run: WorksheetRun
+): string[] {
+  const high = isHighSchoolOrAdult(input);
+  const middle = !high && input.age >= 11;
+  const rng = seededRng(`${run.seed}|passage-extend`);
+  const minutesA = 15 + Math.floor(rng() * 5) * 5; // 15..35
+  const minutesB = minutesA + 10 + Math.floor(rng() * 3) * 5; // +10..+20
+  const tallyA = 4 + Math.floor(rng() * 4);
+  const tallyB = tallyA + 2 + Math.floor(rng() * 3);
+  const tallyC = tallyB + 1 + Math.floor(rng() * 3);
+
+  if (high) {
+    return [
+      `Method matters as much as motivation. Before collecting anything, the group writes down what would count as success and what would count as failure, so the standard cannot quietly shift after the results arrive. They agree on how each observation about ${theme} will be recorded, who will record it, and how disagreements will be settled. This may look like bureaucracy, but it is the opposite: it is the discipline that lets a small study say something trustworthy instead of something merely convenient.`,
+      `The group also confronts the problem of selection. The examples that come to mind first are usually the most dramatic ones, and dramatic examples are rarely representative. If the team studies only the memorable cases of ${theme}, the conclusion will tilt toward whatever is vivid. So they sample deliberately: ordinary cases alongside striking ones, recent alongside older, successes alongside failures. The resulting picture is messier, but mess that reflects reality is worth more than clarity that reflects bias.`,
+      `Quantitative claims get special scrutiny. When the log shows ${minutesA} minutes of focused work in one session and ${minutesB} in the next, the increase of ${minutesB - minutesA} minutes is a fact; what caused it is an interpretation. The team practices keeping those layers separate. A number can anchor an argument, but it cannot interpret itself. Someone still has to ask whether the measure captures what matters, whether the comparison is fair, and whether a different baseline would tell a different story.`,
+      `Counterargument is treated as a tool, not a threat. After drafting a conclusion about ${theme}, each member writes the strongest objection they can imagine: a missing variable, an alternative cause, a source with reason to exaggerate. If the conclusion survives the objection, it is stated with more confidence. If it does not, the group revises before anyone outside the room has to point out the flaw. Arguments improve fastest when their authors attack them first.`,
+      `Precision in language becomes a habit. The team learns to distinguish "the evidence suggests" from "the evidence shows," and "most cases" from "the cases we examined." These are not decorations; they are claims of different strengths, and a careful reader will hold the writer to exactly the strength claimed. Writing about ${theme} this way is slower, but it produces sentences that can be defended line by line.`,
+      `The project also tests how well the thinking transfers. A claim about ${theme} is re-examined through the lens of another field — a historian's question about sources, a statistician's question about variance, a designer's question about constraints. Each lens exposes an assumption the team had not noticed. Interests like ${interests} stop being separate compartments and become a set of complementary instruments for examining the same problem.`,
+      `Iteration closes the loop. The first version of the team's argument is treated as a draft of the understanding, not the understanding itself. Each revision tightens a definition, replaces an anecdote with a measurement, or concedes a limit honestly. The final write-up about ${theme} is shorter than the first draft and stronger for it, because everything that survived revision earned its place.`,
+      `What remains, after the project ends, is a portable method: define the question, gather evidence on purpose, separate observation from interpretation, invite the counterargument, and state conclusions no more strongly than the evidence allows. Applied to ${theme} this week, it produces one good study. Applied as a habit, it produces a rigorous thinker.`
+    ];
+  }
+
+  if (middle) {
+    return [
+      `The group also tracks its work with data. A practice log shows ${minutesA} minutes of focused work in the first session and ${minutesB} minutes in the second, an increase of ${minutesB - minutesA} minutes. But the team is careful with those numbers: more minutes do not automatically mean better thinking. They pair the log with one sentence about what actually improved, so quantity and quality get recorded together.`,
+      `Annotation becomes a quiet superpower. While reading about ${theme}, the students underline claims in one color and evidence in another. A claim with no evidence nearby earns a question mark in the margin. By the end of the page, the margins hold a map of the argument, and that map makes it far easier to summarize accurately instead of repeating whichever sentence sounded most dramatic.`,
+      `The team practices separating observation from interpretation. "The result improved on the third trial" is an observation; anyone can check it. "It improved because we changed the strategy" is an interpretation, and it needs support. Listing other possible causes — luck, practice, an easier task — keeps the group honest about what the evidence actually proves about ${theme}.`,
+      `A small table helps the team see patterns words might hide. Day one shows ${tallyA} completed attempts, day two shows ${tallyB}, and day three shows ${tallyC}. Adding them gives ${tallyA + tallyB + tallyC} attempts in all, but the more interesting question is why the numbers climbed. The table does not answer that by itself; it tells the team exactly where to look.`,
+      `Revision is treated as part of the work, not a punishment. The first explanation each student writes about ${theme} is usually too vague: "it got better" or "it makes sense." The second draft names the detail, quotes the line, or cites the number. Comparing the two drafts side by side teaches a lesson no lecture can: precise writing is just precise thinking made visible.`,
+      `Vocabulary gets the same evidence treatment. When a new word appears, the group tests its meaning against the sentence around it before reaching for a definition. Then each student uses the word in a fresh sentence about ${theme} or about ${interests}. A word someone can redeploy in a new context is learned; a word someone can only recognize is still a stranger.`,
+      `Midway through, the students notice the skills crossing subject lines. The estimate-then-check habit from math shows up in their reading predictions. The fair-test idea from science shapes how they compare two strategies. Even ${interests} starts to look different: less like entertainment, more like a system with rules, trade-offs, and patterns worth explaining.`,
+      `By the end of the unit, the team has a checklist it actually uses: read the question twice, name the evidence, check the numbers against the claim, and write the reason in a complete sentence. The checklist works on ${theme}, and it works just as well on a history source, a science result, or a tricky word problem. That transfer is the real product of the unit.`
+    ];
+  }
+
+  return [
+    `The team also keeps a simple practice journal about ${theme}. After each session, one student writes the date, one fact, and one question. In the first week the journal shows ${minutesA} minutes of practice, and in the second week it shows ${minutesB} minutes. The students subtract to find a difference of ${minutesB - minutesA} minutes, and then they talk about why the extra time helped. The journal turns ordinary practice into evidence the whole team can check.`,
+    `New words appear during every part of the project. When a student meets a word they do not know, they read the sentence before it and the sentence after it, hunting for clues. Then they try the word in their own sentence about ${theme}. If the sentence makes sense to a partner, the word goes up on the class word wall. Slowly the wall fills with words the team can really use, not just words they have seen once.`,
+    `One afternoon, a test goes wrong in a surprising way. Instead of hiding the mistake, the team writes it down and reads it like a clue. They ask three questions: What did we expect? What actually happened? What will we change next time? The wrong answer turns out to be useful, because it points to a step nobody had checked carefully. Fixing that one step makes the next try much stronger.`,
+    `Numbers help the team see what words alone might miss. The students build a small tally chart: ${tallyA} tries on the first day, ${tallyB} tries on the second day, and ${tallyC} tries on the third day. When they add the tallies, they find ${tallyA + tallyB + tallyC} tries in all. The chart also shows which day had the most practice, and that starts a new conversation about why that day went so well.`,
+    `Everyone on the team has a job, and the jobs rotate. The reader finds and underlines the most useful sentence. The recorder writes the numbers in the notebook. The checker asks, "How do we know?" before any answer is accepted. Rotating jobs means each student practices every skill, and nobody has to be perfect at all of them on the first try.`,
+    `The learning does not stop at school. At home, students notice ${theme} ideas in everyday moments: while sorting objects, planning a game, reading labels, or keeping score. One student teaches a family member what the team discovered, because explaining an idea out loud is one of the best ways to test whether you truly understand it.`,
+    `Estimating becomes a favorite tool. Before measuring anything, each student writes a quick guess. Then the team measures carefully and compares the real number with the guesses. Nobody is in trouble for guessing too high or too low. The point is to notice how close the guess was, and which clue would make the next estimate better.`,
+    `By the end of the week, the team agrees on a simple set of habits: read the question twice, underline the evidence, check the numbers, and explain the reason in a full sentence. These habits work for ${theme}, and they work for spelling tests, science projects, and story problems too. Strong thinking is a habit, and habits grow with practice.`
+  ];
 }
 
 function variantFromRun(run: WorksheetRun, salt: string, variants: string[]): string {
@@ -2064,7 +2201,9 @@ function mathAnswerFor(text: string): string | null {
   if (/1908, 1912, 1916/i.test(text)) return "1920. The pattern adds 4 years.";
   if (/12 source cards/i.test(text)) return "27 source cards.";
   if (/bookmark costs \$8/i.test(text)) return "$56, with $4 change from $60.";
-  if (/movie ticket costs \$8/i.test(text)) return "$56, with $4 change from $60.";
+  if (/ticket costs \$8/i.test(text)) return "$56, with $4 change from $60.";
+  if (/scores 4 points in each of 6 rounds/i.test(text)) return "24 points.";
+  if (/240 km.*60 km each hour/i.test(text)) return "4 hours.";
   if (/Mission Data table/i.test(text)) return "Full strategy had the best accuracy at 83 percent.";
   if (/4 sets of 6/i.test(text)) return "24 cards.";
   if (/3, 6, 12, 24/i.test(text)) return "48 and 96.";
@@ -2091,7 +2230,9 @@ function mathExplanationFor(text: string): string | null {
   if (/1908, 1912, 1916/i.test(text)) return "Each date is 4 years later, so 1916 + 4 = 1920.";
   if (/12 source cards/i.test(text)) return "Add the two days: 12 + 15 = 27.";
   if (/bookmark costs \$8/i.test(text)) return "Seven bookmarks cost 7 x 8 = 56 dollars, and 60 - 56 = 4 dollars left.";
-  if (/movie ticket costs \$8/i.test(text)) return "Seven tickets cost 7 x 8 = 56 dollars, and 60 - 56 = 4 dollars left.";
+  if (/ticket costs \$8/i.test(text)) return "Seven tickets cost 7 x 8 = 56 dollars, and 60 - 56 = 4 dollars left.";
+  if (/scores 4 points in each of 6 rounds/i.test(text)) return "There are 6 equal rounds with 4 points each, so 4 x 6 = 24.";
+  if (/240 km.*60 km each hour/i.test(text)) return "Divide the distance by the speed: 240 / 60 = 4 hours.";
   if (/Mission Data table/i.test(text)) return "Compare the Accuracy column: 68 percent, 77 percent, and 83 percent. The largest number is 83 percent.";
   if (/4 sets of 6/i.test(text)) return "There are 4 equal groups with 6 in each group, so 4 x 6 = 24.";
   if (/3, 6, 12, 24/i.test(text)) return "Each number doubles, so 24 doubles to 48 and 48 doubles to 96.";
@@ -2140,7 +2281,9 @@ function mathChoicesFor(question: { section: string; text: string }): string[] |
   if (/1908, 1912, 1916/i.test(text)) return ["1918", "1920", "1922", "1924"];
   if (/12 source cards/i.test(text)) return ["17", "25", "27", "30"];
   if (/bookmark costs \$8/i.test(text)) return ["$48, $12 change", "$56, $4 change", "$60, $0 change", "$64, $4 change"];
-  if (/movie ticket costs \$8/i.test(text)) return ["$48, $12 change", "$56, $4 change", "$60, $0 change", "$64, $4 change"];
+  if (/ticket costs \$8/i.test(text)) return ["$48, $12 change", "$56, $4 change", "$60, $0 change", "$64, $4 change"];
+  if (/scores 4 points in each of 6 rounds/i.test(text)) return ["10", "20", "24", "46"];
+  if (/240 km.*60 km each hour/i.test(text)) return ["3 hours", "4 hours", "5 hours", "6 hours"];
   if (/Mission Data table/i.test(text)) return ["Quick review", "Evidence notes", "Full strategy", "They were all the same"];
   if (/4 sets of 6/i.test(text)) return ["18", "24", "10", "36"];
   if (/3, 6, 12, 24/i.test(text)) return ["36 and 48", "48 and 96", "30 and 36", "48 and 72"];
@@ -2193,8 +2336,429 @@ function socialAnswerFor(text: string): string {
   return "Sample: give a reason and one piece of evidence for who is affected and why.";
 }
 
-// Theme-aware question banks, one per canonical subject. Each bank holds enough
-// distinct items to cover the planned section counts without repeating.
+type OverflowQuestion = { text: string; answer: string; explanation: string; choices?: string[] };
+
+// Produces the (k+1)-th question BEYOND a subject's bank, fully specified with a
+// computed answer. Numeric templates derive their numbers from the worksheet seed and k,
+// so any requested section size (the plan editor allows up to 12) yields unique
+// questions instead of verbatim repeats of bank items.
+function overflowQuestionFor(
+  subject: string,
+  k: number,
+  theme: string,
+  ctx: { high: boolean; middle: boolean; run: WorksheetRun }
+): OverflowQuestion {
+  const rng = seededRng(`${ctx.run.seed}|overflow|${subject}|${k}`);
+  const int = (lo: number, hi: number) => lo + Math.floor(rng() * (hi - lo + 1));
+  // Each template keys at least one displayed number directly off k (injective across
+  // the k-values that revisit the same template), so two overflow questions can never
+  // render identical text even when the seeded draws coincide.
+
+  if (subject === "Math Reasoning") {
+    if (ctx.high) {
+      const t = k % 3;
+      if (t === 0) {
+        const n = [40, 60, 80, 120][k % 4];
+        const pct = [25, 35, 45, 65][int(0, 3)];
+        const ans = (n * pct) / 100;
+        return {
+          text: `A ${theme} data set has ${n} entries. If ${pct} percent of them meet the quality standard, how many entries is that?`,
+          answer: `${ans} entries.`,
+          explanation: `${pct} percent of ${n} is ${pct / 100} x ${n} = ${ans}.`,
+          choices: shuffleUnique([ans, ans + n / 10, Math.max(1, ans - n / 10), n - ans], rng).map((v) => String(v))
+        };
+      }
+      if (t === 1) {
+        const a = int(2, 5);
+        const b = 3 + (k % 4);
+        const x = int(6, 14);
+        const y = a * x + b;
+        return {
+          text: `The function f(x) = ${a}x + ${b} models points earned after x completed ${theme} tasks. If f(x) = ${y}, what is x?`,
+          answer: `x = ${x}.`,
+          explanation: `Set ${a}x + ${b} = ${y}, so ${a}x = ${y - b} and x = ${x}.`,
+          choices: shuffleUnique([x, x + 2, x - 2, x + a], rng).map((v) => `x = ${v}`)
+        };
+      }
+      const lo = (2 + (k % 4)) * 10;
+      const steps = int(2, 4);
+      const hi = lo + steps * 10;
+      const gain = steps * int(3, 6);
+      return {
+        text: `A ${theme} log shows practice time rising from ${lo} to ${hi} minutes while accuracy rises by ${gain} percentage points. What is the average accuracy gain per 10 minutes?`,
+        answer: `${gain / steps} percentage points per 10 minutes.`,
+        explanation: `From ${lo} to ${hi} minutes is ${steps} ten-minute steps; ${gain} / ${steps} = ${gain / steps} points per step.`,
+        choices: shuffleUnique([gain / steps, gain, steps, gain / steps + 2], rng).map((v) => `${v} points`)
+      };
+    }
+
+    const t = k % 4;
+    if (t === 0) {
+      const a = int(3, 9);
+      const b = 4 + (k % 5);
+      return {
+        text: `A ${theme} squad earns ${a} points in each of ${b} challenges. How many points in all? Show your setup.`,
+        answer: `${a * b} points.`,
+        explanation: `There are ${b} equal groups of ${a}, so ${a} x ${b} = ${a * b}.`,
+        choices: shuffleUnique([a * b, a * b - a, a * b + b, a + b], rng).map((v) => String(v))
+      };
+    }
+    if (t === 1) {
+      const p = int(4, 9);
+      const q = 3 + (k % 5);
+      const cost = p * q;
+      const bill = (Math.floor(cost / 10) + 1) * 10;
+      return {
+        text: `A ${theme} pass costs $${p}. How much do ${q} passes cost, and what is the change from $${bill}?`,
+        answer: `$${cost}, with $${bill - cost} change.`,
+        explanation: `${q} x ${p} = ${cost} dollars, and ${bill} - ${cost} = ${bill - cost} dollars left.`,
+        choices: shuffleUnique([cost, cost + p, cost - p, cost + q], rng).map((v) => `$${v}`)
+      };
+    }
+    if (t === 2) {
+      const s = [30, 40, 50, 60, 80][k % 5];
+      const h = int(3, 6);
+      return {
+        text: `A ${theme} journey covers ${s * h} km at ${s} km each hour. How many hours does it take? Show your work.`,
+        answer: `${h} hours.`,
+        explanation: `Divide distance by speed: ${s * h} / ${s} = ${h}.`,
+        choices: shuffleUnique([h, h + 1, h - 1, h + 2], rng).map((v) => `${v} hours`)
+      };
+    }
+    const m = 4 + (k % 5);
+    const per = int(5, 9);
+    return {
+      text: `A ${theme} session lasts ${m * per} minutes, split equally among ${m} activities. How many minutes does each activity get?`,
+      answer: `${per} minutes.`,
+      explanation: `Divide the total time by the activities: ${m * per} / ${m} = ${per}.`,
+      choices: shuffleUnique([per, per + 2, per - 1, per + m], rng).map((v) => `${v} minutes`)
+    };
+  }
+
+  if (subject === "Logic and Patterns") {
+    const t = k % 4;
+    if (t === 0) {
+      // d starts at 4: the bank's own pattern question uses d = 3 (5, 8, 11, 14), so
+      // overflow sequences can never reproduce it.
+      const a = int(2, 9);
+      const d = 4 + (k % 5);
+      const seq = [a, a + d, a + 2 * d, a + 3 * d];
+      return {
+        text: `Continue the pattern and say the rule in words: ${seq.join(", ")}, ___, ___.`,
+        answer: `${a + 4 * d} and ${a + 5 * d}. The rule adds ${d} each time.`,
+        explanation: `Each number is ${d} more than the one before: ${a + 3 * d} + ${d} = ${a + 4 * d}, then ${a + 4 * d} + ${d} = ${a + 5 * d}.`
+      };
+    }
+    if (t === 1) {
+      // a starts at 4: the math bank's doubling pattern starts at 3 (3, 6, 12, 24).
+      const a = 4 + (k % 5);
+      const seq = [a, a * 2, a * 4, a * 8];
+      return {
+        text: `Find the next number and explain the rule: ${seq.join(", ")}, ___.`,
+        answer: `${a * 16}. Each number doubles.`,
+        explanation: `Every step multiplies by 2, so ${a * 8} x 2 = ${a * 16}.`
+      };
+    }
+    if (t === 2) {
+      const m = [3, 4, 5, 6, 7][k % 5];
+      const outlier = m * 4 + 1;
+      const values = [m * 2, m * 3, outlier, m * 4, m * 5].sort((x, y) => x - y);
+      return {
+        text: `Find the odd one out and say why: ${values.join(", ")}.`,
+        answer: `${outlier}, because all the others are multiples of ${m}.`,
+        explanation: `${m * 2}, ${m * 3}, ${m * 4}, and ${m * 5} divide evenly by ${m}; ${outlier} does not.`
+      };
+    }
+    const pools = [
+      ["Mia", "Leo", "Sam"],
+      ["Ravi", "Noor", "Kai"],
+      ["Tara", "Ben", "Lina"],
+      ["Owen", "Zoe", "Raj"],
+      ["Iris", "Theo", "Nina"]
+    ];
+    const [first, second, third] = pools[k % pools.length];
+    return {
+      text: `Three players finish a ${theme} relay. ${first} finishes before ${second}. ${second} finishes before ${third}. Who finishes last? Explain how you know.`,
+      answer: `${third} finishes last.`,
+      explanation: `${first} is ahead of ${second}, and ${second} is ahead of ${third}, so ${third} must be at the back.`
+    };
+  }
+
+  // Text subjects: distinct prompt templates per subject (enough to cover the largest
+  // possible overflow given bank sizes and the 12-question section cap).
+  const open = (text: string, answer: string, explanation: string): OverflowQuestion => ({ text, answer, explanation });
+  const templatesBySubject: Record<string, OverflowQuestion[]> = {
+    "Reading Comprehension": [
+      open(
+        `Write a new title for the passage and give two details from the text that support your title.`,
+        "Open response. A strong title names the passage's main idea, with two supporting details copied or paraphrased from the text.",
+        "A good title is a one-line summary; the two details prove it fits the whole passage, not just one paragraph."
+      ),
+      open(
+        `Summarize the passage in exactly two sentences: one for the main idea and one for the strongest detail.`,
+        "Open response. Sentence one states the main idea; sentence two gives the best supporting detail from the passage.",
+        "Limiting the summary to two sentences forces the reader to choose what matters most."
+      ),
+      open(
+        `Find one sentence in the passage that states a fact and one that gives an opinion or interpretation. Copy both and label them.`,
+        "Open response. The fact can be checked or measured; the opinion or interpretation makes a judgment that needs support.",
+        "Separating facts from interpretations is the first step of evidence-based reading."
+      ),
+      open(
+        `Which paragraph is most important to the passage's message? Name it and defend your choice with one detail.`,
+        "Open response. Any paragraph is acceptable if the answer names it and supports the choice with a detail from the text.",
+        "Defending the choice with a detail turns a preference into an argument."
+      ),
+      open(
+        `What would the reader lose if the final paragraph were removed? Explain in one or two sentences.`,
+        "Open response. A strong answer names what the conclusion adds — the lesson, the summary, or the connection back to the main idea.",
+        "Conclusions usually carry the author's point; noticing that is part of understanding structure."
+      ),
+      open(
+        `Write one question the passage raises but does not answer, and say where you would look for the answer.`,
+        "Open response. A strong answer asks a question tied to the passage and names a sensible source — a book, an expert, an experiment, or a record.",
+        "Good readers leave a text with new questions, not just answers."
+      ),
+      open(
+        `Pick the most important word in the passage and explain why the author needed it.`,
+        "Open response. A strong answer picks a word tied to the main idea and explains what would be lost without it.",
+        "Weighing individual words builds precise reading habits."
+      ),
+      open(
+        `Describe how the passage would change if it were told from a different point of view.`,
+        "Open response. A strong answer names the new point of view and one detail that would change.",
+        "Considering other perspectives deepens comprehension of the original."
+      )
+    ],
+    "Vocabulary in Context": [
+      open(
+        `Choose two vocabulary words from the cards above and use both in one sentence about ${theme}.`,
+        "Open response. One grammatical sentence that uses both words correctly and connects to the theme.",
+        "Combining two words in one sentence proves control of both meanings at once."
+      ),
+      open(
+        `Pick one vocabulary word and write one synonym and one antonym for it. Explain the difference the antonym makes.`,
+        "Open response. A reasonable synonym and antonym for any card word, with one sentence on the contrast.",
+        "Synonyms and antonyms map where a word sits among its neighbors."
+      ),
+      open(
+        `Write a question about ${theme} that uses one vocabulary word correctly.`,
+        "Open response. A real question that uses one card word with its correct meaning.",
+        "Using a word inside a question shows flexible, not memorized, understanding."
+      ),
+      open(
+        `Choose one vocabulary word and explain how its meaning would shift in a different subject, like science or sports.`,
+        "Open response. A strong answer shows the same word doing slightly different work in a new context.",
+        "Words carry core meanings that adapt to context; noticing the shift builds vocabulary depth."
+      ),
+      open(
+        `Use one vocabulary word in a sentence that describes something from the reading passage.`,
+        "Open response. A sentence that uses the word correctly and refers to a real detail from the passage.",
+        "Connecting vocabulary back to the passage links word study with comprehension."
+      ),
+      open(
+        `Teach one vocabulary word to a younger student: write a kid-friendly definition and one example about ${theme}.`,
+        "Open response. A simple, accurate definition and one concrete example.",
+        "If you can teach a word simply, you truly own it."
+      ),
+      open(
+        `Pick the vocabulary word you think you will use most this week and explain when you expect to use it.`,
+        "Open response. Any card word, with a believable everyday situation.",
+        "Planning to use a word makes it far more likely to stick."
+      ),
+      open(
+        `Write two sentences about ${theme} that use the same vocabulary word in two different ways.`,
+        "Open response. Two correct sentences showing the word in different roles or situations.",
+        "Reusing one word in new frames stretches understanding of its range."
+      )
+    ],
+    "Grammar and Writing": [
+      open(
+        `Fix the capitalization and punctuation: "after the ${theme} session the team celebrated together"`,
+        `Sample: "After the ${theme} session, the team celebrated together."`,
+        "Start with a capital letter, add the comma after the opening phrase, and end with a period."
+      ),
+      open(
+        `Combine these into one sentence with a connecting word: "The group practiced daily. The results improved."`,
+        `Sample: "Because the group practiced daily, the results improved."`,
+        "A connector like because, so, or and joins two short sentences into one clear thought."
+      ),
+      open(
+        `Rewrite this run-on as two complete sentences: "we made a plan it worked on the first try"`,
+        `Sample: "We made a plan. It worked on the first try."`,
+        "Each complete thought gets its own capital letter and end mark."
+      ),
+      open(
+        `Choose the correct word and explain why: "The team did (good / well) in the ${theme} challenge."`,
+        `"Well" — it is an adverb describing how the team did; "good" is an adjective for nouns.`,
+        "Adverbs describe verbs; adjectives describe nouns."
+      ),
+      open(
+        `Add one adjective and one adverb to make this sentence stronger: "The group finished the project."`,
+        `Sample: "The determined group carefully finished the project."`,
+        "The adjective sharpens the noun; the adverb sharpens the verb."
+      ),
+      open(
+        `Rewrite in the past tense: "The team wins the ${theme} round and celebrates together."`,
+        `Sample: "The team won the ${theme} round and celebrated together."`,
+        "Both verbs must shift to past tense: wins becomes won, celebrates becomes celebrated."
+      ),
+      open(
+        `Write one sentence about ${theme} that correctly uses quotation marks.`,
+        `Sample: "We are ready," said the captain before the ${theme} round began.`,
+        "Quotation marks wrap the exact spoken words, with punctuation inside the closing mark."
+      ),
+      open(
+        `Shorten this sentence without losing its meaning: "Due to the fact that the team was prepared, the team was able to succeed."`,
+        `Sample: "Because the team was prepared, it succeeded."`,
+        "Concise writing replaces wordy phrases and repeated nouns."
+      )
+    ],
+    "Science Investigation": [
+      open(
+        `Plan a ${theme} test: name the one thing you will change, two things you will keep the same, and what you will measure.`,
+        "Sample: change one variable, keep the time and the setup the same, and measure the result with the same tool each trial.",
+        "A fair test changes one variable while controlling the rest."
+      ),
+      open(
+        `Why should a ${theme} test be repeated more than once before trusting the result?`,
+        "Sample: one trial can be luck; repeated trials show whether the result is a pattern.",
+        "Repetition separates real effects from chance."
+      ),
+      open(
+        `Name one tool or method you could use to measure results in a ${theme} experiment, and why it fits.`,
+        "Sample: a timer, ruler, counter, or score sheet — whichever matches what is being measured.",
+        "Choosing the measuring tool is part of designing the experiment."
+      ),
+      open(
+        `A friend says, "It worked once, so it always works." Explain politely why one trial is not enough evidence.`,
+        "Sample: one success could come from luck or hidden conditions; more trials under the same setup are needed.",
+        "Scientific claims need repeatable evidence, not single events."
+      ),
+      open(
+        `What problem appears if you change two things at once in a ${theme} test?`,
+        "You cannot tell which change caused the result.",
+        "When two variables change together, their effects are tangled; change one at a time."
+      ),
+      open(
+        `Write one "If ..., then ..." hypothesis about ${theme} that you could actually test.`,
+        "Open response. The 'if' names the change; the 'then' predicts a measurable result.",
+        "A testable hypothesis makes a prediction that evidence can confirm or reject."
+      ),
+      open(
+        `Describe one observation about ${theme} you could record with numbers instead of words. Why are numbers useful here?`,
+        "Open response. Sample: counting attempts or timing rounds — numbers can be compared exactly.",
+        "Quantitative records make comparisons and patterns checkable."
+      ),
+      open(
+        `After a ${theme} test, your result surprises you. List the first two things you should check before announcing it.`,
+        "Sample: check the measurement and check whether anything besides the planned variable changed.",
+        "Surprising results are checked before they are trusted."
+      )
+    ],
+    "Social Studies and History": [
+      open(
+        `Name one rule or tradition connected to ${theme} and explain why a community might value it.`,
+        "Open response. A strong answer names the rule and ties it to fairness, safety, or belonging.",
+        "Rules and traditions usually protect something a community cares about."
+      ),
+      open(
+        `How could a new technology change the way people enjoy ${theme}? Name one benefit and one cost.`,
+        "Open response. One realistic benefit and one realistic cost or trade-off.",
+        "Change usually helps some people and burdens others; naming both sides is fair thinking."
+      ),
+      open(
+        `Write two questions you would ask someone who experienced ${theme} long ago.`,
+        "Open response. Two specific questions about what changed, what it felt like, or what evidence remains.",
+        "Interview questions are how historians collect first-person sources."
+      ),
+      open(
+        `Describe how two different groups might see the same ${theme} event differently, and why.`,
+        "Open response. A strong answer names both groups and the reason their views differ.",
+        "Perspective depends on what each group experiences and stands to gain or lose."
+      ),
+      open(
+        `What evidence would show that ${theme} mattered to a community ten years ago?`,
+        "Open response. Sample: photos, newsletters, schedules, awards, or records from that time.",
+        "Claims about the past need sources from the past."
+      ),
+      open(
+        `Plan a fair vote for a ${theme} club decision. What steps keep it fair?`,
+        "Sample: everyone hears the options, votes privately or equally, and the count is checked openly.",
+        "Fair process — equal voice and an open count — is what makes a result legitimate."
+      ),
+      open(
+        `Name one way ${theme} connects people from different places or backgrounds.`,
+        "Open response. A strong answer gives a concrete shared activity, event, or community.",
+        "Shared interests build bridges across differences."
+      ),
+      open(
+        `If your town built one new place for ${theme}, where should it go and who should get a say?`,
+        "Open response. A location with a reason, plus the groups affected by the choice.",
+        "Community decisions work best when affected voices are included."
+      )
+    ],
+    "Critical Thinking": [
+      open(
+        `Name one habit that would make a ${theme} learner improve fastest, and defend it with a reason.`,
+        "Open response. A specific habit plus a reason tied to practice, feedback, or focus.",
+        "A defensible choice needs a mechanism: why would this habit cause improvement?"
+      ),
+      open(
+        `What is one mistake people make when judging ${theme} results too quickly?`,
+        "Sample: trusting one result, ignoring conditions, or confusing luck with skill.",
+        "Quick judgments skip the evidence check that careful thinking requires."
+      ),
+      open(
+        `Compare practicing ${theme} alone versus with a partner. Give one strength of each.`,
+        "Open response. Sample: alone builds focus at your own pace; a partner gives feedback and new ideas.",
+        "Comparisons are strongest when each side gets a genuine advantage."
+      ),
+      open(
+        `Design a one-week improvement plan for ${theme} with one measurable checkpoint.`,
+        "Open response. A plan with specific days or sessions and one number to check at the end.",
+        "A measurable checkpoint turns a wish into a testable plan."
+      ),
+      open(
+        `Which matters more for ${theme}: speed or accuracy? Take a side and defend it.`,
+        "Open response. Either side works if the reason fits the situation described.",
+        "Strong arguments acknowledge that the answer depends on the goal, then commit to a case."
+      ),
+      open(
+        `Explain how you would teach a beginner the single most important idea in ${theme}.`,
+        "Open response. One core idea, explained simply, with one example or demonstration.",
+        "Choosing the ONE most important idea forces prioritization — a core thinking skill."
+      ),
+      open(
+        `Describe a time when the obvious answer about ${theme} would be wrong. What clue reveals the better answer?`,
+        "Open response. A situation where first impressions mislead, plus the detail that corrects them.",
+        "Spotting when intuition fails is the heart of careful reasoning."
+      ),
+      open(
+        `You can only keep three pieces of advice about ${theme}. Which three, and why those?`,
+        "Open response. Three concrete tips with a short reason for each.",
+        "Ranking advice requires weighing usefulness, not just listing it."
+      )
+    ]
+  };
+
+  const templates = templatesBySubject[subject] ?? templatesBySubject["Critical Thinking"];
+  return templates[k % templates.length];
+}
+
+// Order multiple-choice options deterministically (seeded) with duplicates removed and
+// the correct answer guaranteed present (it is always the first input).
+function shuffleUnique(values: number[], rng: () => number): number[] {
+  const unique = [...new Set(values)];
+  for (let i = unique.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [unique[i], unique[j]] = [unique[j], unique[i]];
+  }
+  return unique;
+}
+
+// Theme-aware question banks, one per canonical subject. Sections that ask for more
+// questions than a bank holds are topped up by overflowQuestionFor, never by repeats.
 function fallbackQuestionBanks(args: {
   high: boolean;
   middle: boolean;
