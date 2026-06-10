@@ -42,6 +42,8 @@ type LearningBlueprint = {
   estimatedMinutes?: number;
   themeThread?: string;
   parentNote?: string;
+  // Passed through from the editable plan preview so user edits take effect.
+  reading?: { wordCount?: number; topic?: string; lexileTarget?: string };
 };
 
 // Canonical subjects the fallback can generate. The blueprint may request any of
@@ -249,7 +251,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-const VALID_STRUGGLES = new Set(["Reading","Fractions","Word Problems","Vocabulary","Grammar","Writing","Science","Logic"]);
 const VALID_FOCUSES   = new Set(["balanced","more-math","more-reading","math-only","reading-only"]);
 const VALID_GOALS     = new Set(["general","test-prep","catching-up","getting-ahead"]);
 const VALID_TIMES     = new Set([20, 40, 60]);
@@ -271,8 +272,10 @@ async function parseInput(request: NextRequest): Promise<{ input: WorksheetInput
   if (!Number.isInteger(age) || age < 3 || age > 26) throw new Error("Please choose an age between 3 and 26.");
   if (!interests)               throw new Error("Please add at least one interest.");
 
+  // Struggle areas are now dynamic (grade-specific topics from the UI), so accept any
+  // sanitized short label rather than a fixed whitelist.
   const strugglingWith = Array.isArray(body.strugglingWith)
-    ? body.strugglingWith.map(String).filter((s: string) => VALID_STRUGGLES.has(s))
+    ? body.strugglingWith.map((s: unknown) => cleanText(String(s), 40)).filter(Boolean).slice(0, 8)
     : [];
   const subjectFocus = VALID_FOCUSES.has(body.subjectFocus) ? String(body.subjectFocus) : "balanced";
   const goal         = VALID_GOALS.has(body.goal)           ? String(body.goal)         : "general";
@@ -402,19 +405,21 @@ async function generatePassageBundle(
   run: WorksheetRun
 ): Promise<{ passageHtml: string; vocab: string[][]; readingQuestions: GeneratedQuestion[] }> {
   const profile = qualityProfileFor(input);
+  // Honor an edited reading length from the plan preview; otherwise use the grade floor.
+  const targetReadingWords = Math.max(120, Math.min(900, Math.round(blueprint.reading?.wordCount ?? profile.minReadingWords)));
   const readingCount = blueprint.sections.find((s) => s.subject === "Reading Comprehension")?.questionCount ?? 4;
   const vocabCount = Math.max(
     profile.minVocabularyCards,
     blueprint.sections.find((s) => s.subject === "Vocabulary in Context")?.questionCount ?? profile.minVocabularyCards
   );
 
-  const prompt = passageBundlePrompt(input, blueprint, run, profile.minReadingWords, readingCount, vocabCount);
+  const prompt = passageBundlePrompt(input, blueprint, run, targetReadingWords, readingCount, vocabCount);
   const attempts = [
     {
       label: "quality",
       model: PASSAGE_MODEL,
       temperature: 0.58,
-      maxTokens: passageTokenBudgetFor(input, profile.minReadingWords),
+      maxTokens: passageTokenBudgetFor(input, targetReadingWords),
       timeoutMs: LLM_PASSAGE_TIMEOUT_MS,
       prompt
     },
@@ -422,13 +427,13 @@ async function generatePassageBundle(
       label: "repair",
       model: FAST_MODEL,
       temperature: 0.36,
-      maxTokens: passageTokenBudgetFor(input, profile.minReadingWords),
+      maxTokens: passageTokenBudgetFor(input, targetReadingWords),
       timeoutMs: LLM_PASSAGE_REPAIR_TIMEOUT_MS,
       prompt: `${prompt}
 
 IMPORTANT REPAIR INSTRUCTION:
 The previous passage attempt was too short or malformed. Return complete JSON only.
-Write ${passageParagraphTargetFor(input)} complete paragraphs totaling at least ${profile.minReadingWords} words.
+Write ${passageParagraphTargetFor(input)} complete paragraphs totaling at least ${targetReadingWords} words.
 Do not summarize the task. Do not apologize. Do not stop early.`
     }
   ];
@@ -452,7 +457,7 @@ Do not summarize the task. Do not apologize. Do not stop early.`
           { role: "user", content: attempt.prompt }
         ]
       });
-      const bundle = normalizePassageBundle(content, profile.minReadingWords, readingCount);
+      const bundle = normalizePassageBundle(content, targetReadingWords, readingCount);
       console.info(`Passage bundle ${attempt.label} succeeded in ${Date.now() - started}ms`);
       return bundle;
     } catch (error) {

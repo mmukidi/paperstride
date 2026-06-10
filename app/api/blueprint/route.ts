@@ -41,9 +41,6 @@ const KNOWN_SUBJECTS = [
   "Logic and Patterns","Critical Thinking"
 ] as const;
 
-const VALID_STRUGGLES = new Set([
-  "Reading","Fractions","Word Problems","Vocabulary","Grammar","Writing","Science","Logic"
-]);
 const VALID_FOCUSES = new Set(["balanced","more-math","more-reading","math-only","reading-only"]);
 const VALID_GOALS   = new Set(["general","test-prep","catching-up","getting-ahead"]);
 const VALID_TIMES   = new Set([20, 40, 60]);
@@ -165,8 +162,10 @@ async function parseInput(request: NextRequest): Promise<ParsedInput> {
   if (!Number.isInteger(age) || age < 3 || age > 26) throw new Error("Please choose an age between 3 and 26.");
   if (!interests)               throw new Error("Please add at least one interest.");
 
+  // Struggle areas are dynamic (grade-specific topics from the UI) — accept any sanitized
+  // short label rather than a fixed whitelist.
   const strugglingWith = Array.isArray(body.strugglingWith)
-    ? body.strugglingWith.map(String).filter((s: string) => VALID_STRUGGLES.has(s))
+    ? body.strugglingWith.map((s: unknown) => cleanText(String(s), 40)).filter(Boolean).slice(0, 8)
     : [];
 
   const subjectFocus = VALID_FOCUSES.has(body.subjectFocus) ? String(body.subjectFocus) : "balanced";
