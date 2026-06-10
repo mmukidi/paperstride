@@ -232,7 +232,12 @@ export async function POST(request: NextRequest) {
       html = await createHtmlWorksheetWithOllama(input, prebuiltBlueprint);
     } catch (error) {
       console.warn("AI worksheet generation failed; using quality fallback", error);
-      html = createFallbackHtmlWorksheet(input, defaultBlueprint(input));
+      // Preserve the user's edited expert plan when it exists; only fall back to the
+      // default blueprint when there was no prebuilt plan to begin with.
+      html = createFallbackHtmlWorksheet(
+        input,
+        prebuiltBlueprint ?? defaultBlueprint(input)
+      );
     }
 
     return new Response(html, {
@@ -935,6 +940,14 @@ function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlue
   const sections = normalizeSections(candidate.sections, fallback.sections, input);
   const questionCount = sections.reduce((sum, section) => sum + section.questionCount, 0);
 
+  // Preserve reading metadata (word count, topic, Lexile) so user edits from the
+  // expert-panel plan preview are honoured in the passage and question generation.
+  const rawReading = candidate.reading as Record<string, unknown> | undefined;
+  const readingWordCount = Math.max(
+    60,
+    Math.min(900, Number(rawReading?.wordCount) || fallback.reading?.wordCount || 280)
+  );
+
   return {
     curriculumPath: cleanText(String(candidate.curriculumPath || fallback.curriculumPath), 220),
     gradeExpectations: cleanText(
@@ -968,7 +981,18 @@ function normalizeBlueprint(value: unknown, input: WorksheetInput): LearningBlue
     testReadinessPlan: cleanText(
       safeString(candidate.testReadinessPlan) || fallback.testReadinessPlan,
       360
-    )
+    ),
+    reading: {
+      wordCount: readingWordCount,
+      topic: cleanText(String(rawReading?.topic || fallback.reading?.topic || ""), 160),
+      lexileTarget: cleanText(String(rawReading?.lexileTarget || fallback.reading?.lexileTarget || ""), 40),
+    },
+    themeThread: candidate.themeThread
+      ? cleanText(String(candidate.themeThread), 200)
+      : undefined,
+    parentNote: candidate.parentNote
+      ? cleanText(String(candidate.parentNote), 400)
+      : undefined,
   };
 }
 
