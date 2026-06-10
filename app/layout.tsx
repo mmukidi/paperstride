@@ -1,5 +1,19 @@
 import type { Metadata } from "next";
+import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
+
+const display = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-display",
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+const body = Inter({
+  subsets: ["latin"],
+  variable: "--font-body",
+  display: "swap",
+});
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL || "https://paperstride.duckdns.org";
@@ -7,15 +21,15 @@ const siteUrl =
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "PaperStride | Printable practice away from screens",
+    default: "PaperStride | Worksheets built around what they love",
     template: "%s | PaperStride"
   },
   description:
-    "Printable math and reading practice for Pre-K through Grade 8, built for focused learning away from screens.",
+    "An expert engine that turns a child's interests into a personalized, printable workbook — Pre-K through Grade 12, tuned with sliders, printed in minutes. No screens, no accounts.",
   openGraph: {
     title: "PaperStride",
     description:
-      "Printable practice that helps students learn away from screens.",
+      "Turn what they love into how they learn. Personalized printable workbooks, designed by an expert engine.",
     url: siteUrl,
     siteName: "PaperStride",
     images: [
@@ -33,7 +47,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "PaperStride",
     description:
-      "Printable practice that helps students learn away from screens.",
+      "Turn what they love into how they learn. Personalized printable workbooks, designed by an expert engine.",
     images: ["/paperstride-hero.webp"]
   }
 };
@@ -45,7 +59,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className={`${display.variable} ${body.variable}`}>{children}</body>
     </html>
   );
 }
