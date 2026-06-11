@@ -329,9 +329,6 @@ Pedagogical rules the panel must follow:
       }
     ]
   });
-      }
-    ]
-  });
 
   return normaliseBlueprint(parseJson(content), input);
 }
