@@ -20,6 +20,8 @@ accounts or sending learner data to a paid external API.
 - Inputs for nickname, grade/level, age, interests, struggling areas, goal, and
   time available
 - Expert plan preview before worksheet generation
+- Fully dynamic HTML worksheet layout: sections are now rendered in the exact order decided by the expert panel, with reading passages and vocabulary lists embedded inline inside their respective sections instead of hardcoded at the top
+- Aligned `/api/blueprint` (expert plan preview) and `/api/worksheets` (worksheet generation) API schemas so that all expert-enriched details (`masterScenario`, `expertPersona`, `questionBriefs`) are generated during the preview stage and pass cleanly to the generator
 - Local Ollama backend path using native `/api/chat`
 - Ollama `keep_alive` env parsing accepts numeric strings such as `-1` so the
   native API receives a valid number instead of an invalid duration string

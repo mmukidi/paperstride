@@ -274,9 +274,9 @@ const DEFAULT_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
 // Timeouts. Blueprint now runs on the fast model so it no longer needs minutes, but we
 // keep a generous ceiling for the very first (cold) call after a deploy.
 const LLM_BLUEPRINT_TIMEOUT_MS = Number(process.env.LLM_BLUEPRINT_TIMEOUT_MS || 180000);
-const LLM_TIMEOUT_MS           = Number(process.env.LLM_TIMEOUT_MS           ||  90000);
-const LLM_PASSAGE_TIMEOUT_MS    = Number(process.env.LLM_PASSAGE_TIMEOUT_MS   ||  70000); // bounded 7B passage attempt
-const LLM_PASSAGE_REPAIR_TIMEOUT_MS = Number(process.env.LLM_PASSAGE_REPAIR_TIMEOUT_MS || 45000);
+const LLM_TIMEOUT_MS           = Number(process.env.LLM_TIMEOUT_MS           || 180000);
+const LLM_PASSAGE_TIMEOUT_MS    = Number(process.env.LLM_PASSAGE_TIMEOUT_MS   || 120000); // bounded 7B passage attempt
+const LLM_PASSAGE_REPAIR_TIMEOUT_MS = Number(process.env.LLM_PASSAGE_REPAIR_TIMEOUT_MS || 90000);
 // Ollama is always the backend; llmConfigured is always true when the server is running.
 const llmConfigured = true;
 
@@ -1695,18 +1695,7 @@ function interestSvgFor(theme: string, ageBand: AgeBand): string {
 }
 
 function sectionOrderFor(sections: WorksheetSection[], theme: string): WorksheetSection[] {
-  const t = theme.toLowerCase();
-  const priority: Record<string, number> =
-    (isTechnologyTheme(t) || isSportsTheme(t))
-      ? { "Math Reasoning":0, "Logic and Patterns":1, "Reading Comprehension":2, "Vocabulary in Context":3, "Science Investigation":4, "Grammar and Writing":5, "Social Studies and History":6, "Critical Thinking":7 }
-    : (isArtTheme(t) || isMusicTheme(t))
-      ? { "Reading Comprehension":0, "Grammar and Writing":1, "Vocabulary in Context":2, "Critical Thinking":3, "Math Reasoning":4, "Logic and Patterns":5, "Science Investigation":6, "Social Studies and History":7 }
-    : isHistoryTheme(t)
-      ? { "Reading Comprehension":0, "Social Studies and History":1, "Vocabulary in Context":2, "Grammar and Writing":3, "Math Reasoning":4, "Critical Thinking":5, "Science Investigation":6, "Logic and Patterns":7 }
-    : (isNatureTheme(t) || isCookingTheme(t))
-      ? { "Reading Comprehension":0, "Science Investigation":1, "Vocabulary in Context":2, "Math Reasoning":3, "Grammar and Writing":4, "Logic and Patterns":5, "Critical Thinking":6, "Social Studies and History":7 }
-    : { "Reading Comprehension":0, "Vocabulary in Context":1, "Grammar and Writing":2, "Math Reasoning":3, "Science Investigation":4, "Logic and Patterns":5, "Social Studies and History":6, "Critical Thinking":7 };
-  return [...sections].sort((a, b) => (priority[a.subject] ?? 99) - (priority[b.subject] ?? 99));
+  return sections;
 }
 
 function worksheetCss(palette: Palette, ageBand: AgeBand): string {
@@ -2044,16 +2033,17 @@ function assembleWorksheet(
 
   const builtSections = orderedSections.map((section) => {
     const ai = aiQuestionsFor(section.subject);
+    let questions: RenderQuestion[];
     if (section.subject === "Reading Comprehension" && ai && ai.length) {
-      const questions = ai.map((aiQ) => { runningNumber += 1; return fromAi(section.subject, aiQ); });
-      return { subject: section.subject, questions };
+      questions = ai.map((aiQ) => { runningNumber += 1; return fromAi(section.subject, aiQ); });
+    } else {
+      questions = Array.from({ length: section.questionCount }, (_u, index) => {
+        runningNumber += 1;
+        const aiQ = ai && ai[index];
+        return aiQ ? fromAi(section.subject, aiQ) : fromBank(section.subject, index);
+      });
     }
-    const questions = Array.from({ length: section.questionCount }, (_u, index) => {
-      runningNumber += 1;
-      const aiQ = ai && ai[index];
-      return aiQ ? fromAi(section.subject, aiQ) : fromBank(section.subject, index);
-    });
-    return { subject: section.subject, questions };
+    return { ...section, questions };
   });
   const allQuestions = builtSections.flatMap((section) => section.questions);
 
@@ -2064,14 +2054,33 @@ function assembleWorksheet(
         <div class="${responseSpaceClass(q.section, q.promptHtml, q.choices)}"></div>
         <p class="hint">${escapeHtml(q.hint)}</p>
       </article>`;
-  const questionSectionsHtml = builtSections
-    .map(
-      (section) => `<h3 class="section-head">${escapeHtml(section.subject)}</h3>
-    <section class="grid">
-      ${section.questions.map(renderQuestionCard).join("")}
-    </section>`
-    )
+
+  const sectionsHtml = builtSections
+    .map((section) => {
+      let extraHtml = "";
+      if (section.subject === "Reading Comprehension") {
+        extraHtml = `<article class="passage" data-reading-passage="true">${passage}</article>\n`;
+      } else if (section.subject === "Vocabulary in Context") {
+        extraHtml = `<div style="margin-bottom:12px;">${vocabSectionHtml(vocabWords, ageBand)}</div>\n`;
+      }
+
+      let hookHtml = section.engagementHook
+        ? `<p class="tip"><em>${escapeHtml(section.engagementHook)}</em></p>`
+        : "";
+      let scaffoldingHtml = (section.isWeakArea && section.scaffoldingNote)
+        ? `<div class="challenge-badge" style="background:#d8a637;margin-bottom:12px;">Support: ${escapeHtml(section.scaffoldingNote)}</div>`
+        : "";
+
+      return `<h3 class="section-head">${escapeHtml(section.subject)}</h3>
+      ${hookHtml}
+      ${scaffoldingHtml}
+      ${extraHtml}
+      <section class="grid">
+        ${section.questions.map(renderQuestionCard).join("")}
+      </section>`;
+    })
     .join("\n");
+
   const funZone = funZoneBlock(input, theme, run);
   const answerCards = allQuestions
     .map(
@@ -2081,16 +2090,6 @@ function assembleWorksheet(
         <p><strong>Why it is right:</strong> ${q.explanationHtml}</p>
         <p><strong>Watch out for:</strong> ${escapeHtml(watchOutFor(q.section, high))}</p>
         <p><strong>Skill being practiced:</strong> ${escapeHtml(q.section)}. <strong>Next time:</strong> ${escapeHtml(nextTimeTipFor(q.section, high))}</p>
-      </article>`
-    )
-    .join("");
-  const vocabCards = vocabWords
-    .map(
-      ([word, definition, example, hint]) => `<article class="vocab-card" data-vocab="true">
-        <h3>${escapeHtml(word)}</h3>
-        <p><strong>Definition:</strong> ${escapeHtml(definition)}</p>
-        <p><strong>Example:</strong> ${escapeHtml(example)}</p>
-        <p><strong>Memory hint:</strong> ${escapeHtml(hint)}</p>
       </article>`
     )
     .join("");
@@ -2171,17 +2170,7 @@ function assembleWorksheet(
     </svg>
   </section>
 
-  <h2>Reading Comprehension</h2>
-  <article class="passage" data-reading-passage="true">
-    ${passage}
-  </article>
-
-  <h2>Vocabulary in Context</h2>
-  <section class="vocab-grid">
-    ${vocabCards}
-  </section>
-  <h2>Question Missions</h2>
-  ${questionSectionsHtml}
+  ${sectionsHtml}
 
   ${funZone.html}
 

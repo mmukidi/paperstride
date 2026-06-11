@@ -52,8 +52,13 @@ export type BlueprintSection = {
   questionCount: number;
   skills: string[];
   focus: string;
-  isWeakArea: boolean;
-  interestConnection: string;
+  expertPersona?: string;      // NEW: who writes this section (system prompt identity)
+  questionBriefs?: string[];   // NEW: one brief per question slot
+  questionTypes?: string[];    // NEW: question formats for this section
+  engagementHook?: string;     // NEW: why this section excites this specific student
+  scaffoldingNote?: string;    // NEW: how to build confidence if isWeakArea
+  isWeakArea?: boolean;
+  interestConnection?: string;
 };
 
 export type BlueprintPreview = {
@@ -79,6 +84,11 @@ export type BlueprintPreview = {
   answerExpectations: string;
   vocabularyPlan: string;
   testReadinessPlan: string;
+  // Expert-panel-enriched fields
+  ageTrends?: string[];
+  masterScenario?: string;
+  engagementStrategy?: string;
+  motivationTactics?: string[];
 };
 
 type ParsedInput = {
@@ -206,108 +216,119 @@ async function buildBlueprint(input: ParsedInput): Promise<BlueprintPreview> {
 
   const content = await llmChat({
     model: BLUEPRINT_MODEL,
-    temperature: 0.2,
-    maxTokens: 1600,
+    temperature: 0.4,
+    maxTokens: 3200,
     responseFormat: "json_object",
     messages: [
       {
         role: "system",
-        content: `You are five specialists who collaborate to design the perfect worksheet for one student.
-Each specialist owns specific decisions and pushes back if others overreach.
+        content: `You are a panel of five world-class education experts convened to design one perfect worksheet for a specific student. Each expert contributes their speciality:
 
-THE EDUCATOR — owns: subject selection, skills, question counts, reading level, vocabulary tier.
-Ensures the right subjects for the grade, correct skill sequence, curriculum alignment.
+EXPERT 1 — CHILD DEVELOPMENT PSYCHOLOGIST
+You know exactly what engages learners at each developmental stage. You know attention spans, what creates flow vs frustration, how to sequence challenge and success so the student stays motivated start to finish. You push back if the worksheet is too long, too hard, or too generic.
 
-THE DEVELOPMENTAL PSYCHOLOGIST — owns: total question count, difficulty curve, pacing, emotional safety.
-Ensures the count fits the age and attention span. Confidence-builders before stretch questions.
-Caps total questions — the Educator cannot exceed this cap.
+EXPERT 2 — CULTURAL TREND ANALYST  
+You track what children and teens are genuinely passionate about RIGHT NOW — specific games, YouTube channels, TV shows, sports figures, memes, music, social platforms, and topics that define their peer culture. You make content feel relevant by naming SPECIFIC things, not vague categories. You know that "kids like technology" is useless — but "Grade 5 students are currently obsessed with Minecraft Legends, MrBeast challenges, and Among Us" is actionable.
 
-THE MOTIVATIONAL COACH — owns: interest integration, theme thread, fun zone, energy of the worksheet.
-Rejects generic interest use. Interests must become real scenarios, not just inserted words.
-Picks fun zone activities that match the interests and age.
+EXPERT 3 — MASTER CLASSROOM TEACHER
+You know the exact skills this grade is building in school right now. You know the most common misconceptions students have at this age. You know which question types produce genuine learning vs mechanical completion. You design practice that connects directly to what they face in class tests.
 
-THE TEST READINESS COACH — owns: question formats, trap-answer inclusion, strategy language.
-Ensures some questions build test-taking habits appropriate for the age.
+EXPERT 4 — CURRICULUM ARCHITECT
+You sequence subjects and questions within a single session to create a satisfying learning arc. You know when to put challenge before or after confidence-building. You know how many questions of each type a student can genuinely engage with before fatigue sets in. You design worksheets that feel complete and purposeful, not arbitrary.
 
-THE LEARNING SUPPORT SPECIALIST — owns: weak-area targeting, scaffolding hints, parent note.
-Ensures struggling areas get extra questions and specific scaffolding. Writes the parent note.
-The first question in every weak-area section must always be accessible (confidence-builder).
+EXPERT 5 — MOTIVATION COACH
+You know the psychology of what makes students want to finish and come back. You use the student's own interests as genuine intellectual scaffolding — not superficial decoration. You design engagement hooks, challenge frames ("can you crack this?"), and emotional arcs that make learning feel like an adventure rather than a chore.
 
-All five must agree. Return only valid JSON. Never include the student's name or private data.`
+The panel's job: design one perfect worksheet from scratch. Nothing is pre-assumed. You choose which subjects belong (or don't). You choose how many questions per section. You choose the question types. You create the scenario. You write question briefs. Every decision must be justified by genuine pedagogy for THIS specific student.
+
+Return only valid JSON. Never include the learner's name or any private data.`
       },
       {
         role: "user",
-        content: `Design the complete worksheet spec for this learner.
+        content: `Design a complete worksheet plan for this student.
 
-LEARNER:
+STUDENT PROFILE:
 - Grade: ${input.grade}
 - Age: ${input.age}
 - Interests: ${input.interests}
+- Struggling with: ${input.strugglingWith?.length ? input.strugglingWith.join(", ") : "nothing specific"}
+- Goal today: ${input.goal || "general practice"}
+- Time available: ${input.timeAvailable || 30} minutes
+- Challenge preference: (the panel will decide based on grade and goal)
 
-SESSION CONSTRAINTS:
-- ${timeNote}
-- ${focusNote}
-- ${goalNote}
-- ${struggleNote}
-- Total question range for this age: ${bounds.min}–${bounds.max}
+PANEL DISCUSSION — work through these before deciding the plan:
 
-SUBJECTS AVAILABLE (use only those appropriate for this grade):
-${KNOWN_SUBJECTS.map(s => `  - ${s}`).join("\n")}
+Step 1 (Trend Analyst): What 3-5 things are genuinely popular with a ${input.age}-year-old in ${input.grade} RIGHT NOW? Be specific — name shows, games, creators, trends, not categories.
 
-PANEL INSTRUCTIONS:
-1. PSYCHOLOGIST sets total questions (${bounds.min}–${bounds.max}) and difficulty split.
-2. EDUCATOR chooses subjects and question counts that sum to the total, shaped as a
-   DEEP CORE plus SHORT ENRICHMENT: give Reading Comprehension, Grammar and Writing, and
-   Math Reasoning the most questions and real school-level depth; add only 1-3 short
-   enrichment sections (Science, Logic, Social Studies, Critical Thinking) at 1-2 questions
-   each. Do not spread questions thinly across many tiny sections — depth in the core wins.
-   Include Vocabulary in Context whenever there is a reading passage. The reading passage
-   word count must match what this learner reads in school at this grade.
-3. COACH sets themeThread — one specific, connected topic derived from the interests.
-   (e.g. interests: "volcanoes, minecraft" → themeThread: "Building and surviving volcanic eruptions")
-   The theme must weave through every section naturally.
-4. SUPPORT SPECIALIST flags isWeakArea sections and writes the parentNote.
-5. COACH picks fun zone activities suited to the age and interests.
+Step 2 (Psychologist + Trend Analyst): Given their interests (${input.interests}) and the current trends you identified, what ONE vivid scenario would make this student forget they're doing schoolwork? Think: a real character facing a real problem in a world this student cares about. The scenario must use their specific interests authentically — not "a student who likes animals" but something more specific and exciting.
 
-Return this exact JSON shape:
+Step 3 (Master Teacher + Curriculum Architect): Given ${input.grade} and struggling with "${input.strugglingWith?.join(", ") || "nothing specific"}", decide:
+  - Which subjects genuinely serve this student today? (Don't include a subject just because it's standard)
+  - How many questions per subject? (Based on developmental attention span and what each subject needs to be meaningful — not arbitrary round numbers)
+  - What question TYPES work best for each subject at this age? (Multiple choice, open-ended, fill-in, correct-the-mistake, show-your-working, rank-and-explain, yes/no-with-evidence, etc.)
+
+Step 4 (Motivation Coach): Write the engagement hook for each section — why will THIS student want to do THIS section specifically?
+
+Step 5 (Master Teacher): For each question slot in each section, write a specific brief: what cognitive operation does this question test (recall, application, inference, evaluation, creation), what should the stem reference from the master scenario, and what makes a correct vs incorrect answer clear.
+
+Return this JSON (the panel's complete decision):
 {
-  "themeThread": "one vivid theme sentence connecting interests to academics",
-  "estimatedMinutes": 40,
-  "totalQuestions": 16,
-  "challengeProfile": "3 confidence-builders, 10 core, 3 stretch",
-  "curriculumPath": "short curriculum direction",
-  "gradeExpectations": "what this learner should practice",
-  "pageTarget": "4 A4 pages",
-  "motivationStrategy": "how to make this learner excited using their specific interests",
-  "challengeLevel": "balanced",
-  "reading": {
-    "wordCount": 260,
-    "topic": "specific passage topic tied to themeThread",
-    "lexileTarget": "720L"
-  },
-  "vocabulary": { "wordCount": 6 },
+  "ageTrends": ["3-5 specific things popular with this exact age right now — names, not categories"],
+  
+  "masterScenario": "2-4 vivid sentences: a named character, a real problem they face, the specific setting, what is at stake. Must use the student's interests in a way that feels exciting, not educational. Every section of the worksheet takes place in this world.",
+  
+  "engagementStrategy": "1-2 sentences on the motivational arc: how does the worksheet open with confidence, build to challenge, and close with satisfaction?",
+  
+  "motivationTactics": ["3-5 specific psychological tactics for this age, e.g. 'open with a choice so they feel ownership', 'frame hard questions as expert-level challenges', 'use a running score or progress element'"],
+  
+  "curriculumPath": "brief curriculum direction for this student",
+  "gradeExpectations": "what a learner at this exact age/grade should be mastering",
+  "challengeLevel": "gentle | balanced | stretch | advanced — the panel's decision",
+  
   "sections": [
     {
-      "subject": "Reading Comprehension",
-      "questionCount": 4,
-      "skills": ["main idea", "evidence", "inference"],
-      "focus": "one sentence on what this section does and how it ties to themeThread",
+      "subject": "name this section — can be standard or creative based on what serves the student",
+      "questionCount": "number the panel decided, not a default",
+      "skills": ["specific skills practiced in this section"],
+      "focus": "one sentence: what this section does and why it belongs in THIS worksheet",
+      "expertPersona": "exactly who should write these questions — their subject specialty, their knowledge of this age group's errors, how they approach this question type, their tone. Be specific — 3-4 sentences. This becomes the AI's identity when writing the questions.",
+      "questionTypes": ["the question formats to use in this section"],
+      "engagementHook": "one sentence: why will THIS student specifically want to do this section?",
+      "questionBriefs": [
+        "Q1 (cognitive level — e.g. recall/application/inference): exactly what this question asks, what it references from the master scenario, what makes the correct answer distinguishable from wrong ones",
+        "Q2 (cognitive level): ...",
+        "...one brief per question slot"
+      ],
       "isWeakArea": false,
-      "interestConnection": "how the interest is used specifically in this section"
+      "scaffoldingNote": "if isWeakArea: how to open with confidence before the harder questions"
     }
   ],
-  "subjectMix": ["subject names chosen"],
-  "cognitiveSkills": ["analytical thinking"],
-  "visualPlan": ["small SVG line-art"],
-  "questionFormats": ["mission cards", "evidence hunt"],
-  "answerExpectations": "what the answer sheet must include",
-  "vocabularyPlan": "how vocab words, definitions, examples and hints should work",
-  "testReadinessPlan": "age-appropriate test skill plan",
-  "funZone": {
-    "activities": ["word search", "pattern puzzle", "crack the code"]
-  },
-  "parentNote": "Specific, actionable note for the parent about today's weak areas and what to watch."
-}`
+  
+  "subjectMix": ["list of section subjects chosen"],
+  "cognitiveSkills": ["cognitive skills practiced across the whole worksheet"],
+  "motivationStrategy": "how to make THIS learner excited, challenged, and confident",
+  "visualPlan": ["what visual elements belong on this worksheet"],
+  "questionFormats": ["all question formats used across the worksheet"],
+  "answerExpectations": "what the answer sheet must include for every question",
+  "vocabularyPlan": "how vocabulary is taught in context — not just definition lists",
+  "testReadinessPlan": "how this worksheet builds toward future tests",
+  "themeThread": "one sentence tying all sections together through the master scenario",
+  "parentNote": "what to watch for and how to encourage this specific student",
+  "estimatedMinutes": "the panel's estimate for this student"
+}
+
+Pedagogical rules the panel must follow:
+- "questionCount" in the JSON root MUST equal the sum of all section "questionCount" values.
+- Pre-K/K: max 8 questions total, concrete, playful, very short text.
+- Grades 1-3: max ${bounds.max} questions, one reading passage, short activities.
+- Grades 4-6: ${bounds.min}-${bounds.max} questions, real depth in reading and math.
+- Grades 7-8: multi-step reasoning, evidence, written explanation.
+- Grades 9-12: SAT-style evidence, quantitative reasoning, argument writing.
+- Every section must have exactly as many questionBriefs as its questionCount.
+- Never include private data. Never pad. Every question must earn its place.`
+      }
+    ]
+  });
       }
     ]
   });
@@ -359,7 +380,12 @@ function normaliseBlueprint(raw: unknown, input: ParsedInput): BlueprintPreview 
         4
       ),
     },
-    parentNote: cleanText(String(r.parentNote || fallback.parentNote), 400),
+    parentNote: cleanText(String(r.parentNote || fallback.parentNote), 600),
+    // Expert-panel-enriched fields
+    ageTrends: Array.isArray(r.ageTrends) ? normaliseStrList(r.ageTrends, [], 8) : undefined,
+    masterScenario: r.masterScenario ? cleanText(String(r.masterScenario), 800) : undefined,
+    engagementStrategy: r.engagementStrategy ? cleanText(String(r.engagementStrategy), 360) : undefined,
+    motivationTactics: Array.isArray(r.motivationTactics) ? normaliseStrList(r.motivationTactics, [], 8) : undefined,
   };
 }
 
@@ -388,8 +414,13 @@ function normaliseSections(
         questionCount:     count,
         skills:            normaliseStrList(r.skills, [], 6),
         focus:             cleanText(String(r.focus || ""), 200),
+        expertPersona:     cleanText(String(r.expertPersona || ""), 800) || undefined,
+        questionBriefs:    normaliseStrList(r.questionBriefs, [], 20),
+        questionTypes:     normaliseStrList(r.questionTypes, [], 10),
+        engagementHook:    cleanText(String(r.engagementHook || ""), 300) || undefined,
+        scaffoldingNote:   cleanText(String(r.scaffoldingNote || ""), 300) || undefined,
         isWeakArea:        r.isWeakArea === true,
-        interestConnection:cleanText(String(r.interestConnection || ""), 200),
+        interestConnection:cleanText(String(r.interestConnection || ""), 200) || undefined,
       });
     }
   }
