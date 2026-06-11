@@ -652,19 +652,22 @@ async function generateAllSections(
       {
         role: "user",
         content: `Learner: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
-${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold those areas appropriately.` : ""}
+${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold those areas gently.` : ""}
+Challenge level: ${blueprint.challengeLevel ?? "balanced"}
+${blueprint.gradeExpectations ? `Grade expectations: ${blueprint.gradeExpectations}` : ""}
 Theme thread: ${blueprint.themeThread ?? input.interests}
 Freshness key: ${run.seed.slice(0, 18)} (do not print it)
 Scenario lens: ${run.scenario}
 Reasoning angle: ${run.angle}
 
-Write questions for EACH section below. Weave the interests into scenarios so they feel
-specific and motivating. Within each section, make the first question accessible and the
-last the most challenging. Prefer multiple choice (3-4 options, exactly one correct answer
-that appears in "choices"); use an empty "choices" array for writing/explanation prompts.
-For numeric questions, double-check the arithmetic so the explanation matches the answer.
-Avoid repeating generic questions from earlier worksheets; vary names, objects, numbers,
-settings, and the kind of evidence being used.
+Write questions for EACH section below. Weave the learner's specific interests into every
+scenario so questions feel personal and motivating — not generic. Within each section,
+make the first question accessible and the last the most challenging.
+Pitch the cognitive demand to match the challenge level above.
+Prefer multiple choice (3-4 options, exactly one correct answer in "choices");
+use an empty "choices" array for writing/explanation prompts.
+For numeric questions, double-check arithmetic so explanation matches the answer.
+Avoid generic questions; vary names, objects, numbers, settings each time.
 
 SECTIONS:
 ${sectionSpecs}
@@ -709,12 +712,14 @@ async function generateSectionQuestions(
         content: `Write practice questions for ONE worksheet section.
 
 Learner: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
-${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold questions in this section appropriately.` : ""}
+${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold questions in this section gently.` : ""}
+Challenge level: ${blueprint.challengeLevel ?? "balanced"}
+${blueprint.gradeExpectations ? `Grade expectations: ${blueprint.gradeExpectations}` : ""}
 
 Section: ${section.subject}
 Skills: ${section.skills.join(", ") || "core skills for this subject"}
 Focus: ${section.focus}
-${section.isWeakArea ? "⚑ This is a WEAK AREA. Start with one confidence-builder question, then build up. Add a scaffolding hint to harder questions." : ""}
+${section.isWeakArea ? "⚑ WEAK AREA: start with one confidence-builder, then build up. Add scaffolding hints to harder questions." : ""}
 ${section.interestConnection ? `Interest connection: ${section.interestConnection}` : ""}
 Theme thread: ${blueprint.themeThread ?? input.interests}
 Freshness key: ${run.seed.slice(0, 18)} (do not print it)
@@ -722,15 +727,14 @@ Scenario lens: ${run.scenario}
 Reasoning angle: ${run.angle}
 
 Write EXACTLY ${section.questionCount} questions.
-- Q1 should be accessible (confidence-builder). Final Q should be the most challenging.
-- Use the interest connection to make scenarios specific and motivating.
+- Ground EVERY question in the learner's specific interest — not a generic topic.
+- Pitch cognitive demand to match the challenge level above.
+- Q1 accessible (confidence-builder), final Q most challenging.
 - Prefer multiple choice (3-4 options, exactly one correct answer in "choices").
-- Open response for writing/explanation prompts — use empty "choices" array.
+- Open response for writing/explanation prompts — empty "choices" array.
 - Every question needs a correct answer and a short explanation.
-- Vary names, numbers, objects, source details, and settings from previous worksheets.
-- For numeric questions: work the arithmetic carefully and double-check it. The explanation
-  must show the steps that arrive at exactly the correctAnswer. Do not state one number in
-  the steps and a different number as the answer.
+- Vary names, numbers, objects, settings each time.
+- For numeric questions: work the arithmetic carefully; explanation must reach exactly the correctAnswer.
 
 Return JSON exactly:
 { "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ] }`

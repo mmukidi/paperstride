@@ -15,9 +15,9 @@ services:
       # Self-hosted Ollama on the host. No external API key needed.
       LLM_BASE_URL: "${LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
       LLM_FAST_MODEL: "${LLM_FAST_MODEL:-llama3.2:3b}"
-      LLM_MODEL: "${LLM_MODEL:-llama3.2:3b}"
-      LLM_PASSAGE_MODEL: "${LLM_PASSAGE_MODEL:-llama3.2:3b}"
-      WORKSHEET_AI_ENABLED: "${WORKSHEET_AI_ENABLED:-false}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5:7b-instruct}"
+      LLM_PASSAGE_MODEL: "${LLM_PASSAGE_MODEL:-qwen2.5:7b-instruct}"
+      WORKSHEET_AI_ENABLED: "${WORKSHEET_AI_ENABLED:-true}"
       LLM_BLUEPRINT_TIMEOUT_MS: "${LLM_BLUEPRINT_TIMEOUT_MS:-30000}"
       LLM_TIMEOUT_MS: "${LLM_TIMEOUT_MS:-60000}"
       LLM_PASSAGE_TIMEOUT_MS: "${LLM_PASSAGE_TIMEOUT_MS:-70000}"
