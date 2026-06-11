@@ -2105,81 +2105,19 @@ function assembleWorksheet(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PaperStride ${themeTitle(theme)} Workbook</title>
 <style>
-  :root { color-scheme: light; --ink:#17211f; --muted:#5d6966; --line:#d7ddd4; --accent:#126163; --soft:#eef5f1; --warm:#fff8e8; --cool:#eef4ff; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:#f4f4ef; color:var(--ink); font-family: Arial, Helvetica, sans-serif; font-size:15px; line-height:1.45; }
-  .page { background:#fff; max-width: 210mm; min-height: 297mm; margin: 16px auto; padding: 11mm; border:1px solid var(--line); }
-  h1, h2, h3, p { margin-top:0; }
-  h1 { font-size:30px; line-height:1.05; margin-bottom:6px; }
-  h2 { font-size:20px; border-bottom:2px solid var(--line); padding-bottom:4px; margin:18px 0 10px; }
-  h3 { font-size:16px; margin-bottom:6px; }
-  .meta, .tip { color:var(--muted); font-size:13px; }
-  .hero { display:grid; grid-template-columns: 1fr 120px; gap:16px; align-items:center; border:1px solid var(--line); padding:14px; background:var(--warm); }
-  .grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }
-  .card, .answer, .vocab-card { border:1px solid var(--line); border-radius:6px; padding:10px; break-inside: avoid; }
-  .card { background:#fff; }
-  .answer { background:#fbfbf7; }
-  .vocab-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:8px; }
-  .vocab-card { background:#fbfdfb; }
-  .passage { columns: 2 260px; column-gap: 18px; border:1px solid var(--line); padding:12px; background:#fff; }
-  .label { color:var(--accent); font-size:12px; font-weight:700; text-transform:uppercase; }
-  .section-head { margin:14px 0 6px; padding:4px 8px; background:var(--soft); border-left:3px solid var(--accent); font-size:15px; }
-  .write { min-height:58px; margin-top:8px; background:repeating-linear-gradient(to bottom, transparent 0, transparent 25px, #bdc7c3 26px); }
-  .write--compact { min-height:34px; }
-  .write--extended { min-height:104px; }
-  .choice-line { font-size:13px; color:#303836; }
-  .fun-card { background:var(--cool); }
-  .puzzle-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:6px 0; }
-  .puzzle-shape svg { width:26px; height:26px; }
-  .puzzle-blank { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border:1px dashed var(--accent); border-radius:4px; font-weight:700; color:var(--accent); }
-  .puzzle-svg { width:100%; max-width:200px; height:auto; margin-top:4px; }
-  .puzzle-pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .puzzle-cap { font-size:12px; color:var(--muted); margin:0 0 2px; }
-  .puzzle-code { font-family:monospace; font-size:16px; letter-spacing:1px; margin:6px 0; }
-  .puzzle-word { display:inline-block; border:1px solid var(--line); border-radius:4px; padding:1px 6px; margin:2px; font-size:12px; }
-  .ws-grid { border-collapse:collapse; margin-top:6px; }
-  .ws-grid td { border:1px solid var(--line); width:21px; height:21px; text-align:center; font-family:monospace; font-size:12px; }
-  .magic-square { margin-top:6px; }
-  .magic-square td { border:1px solid var(--ink); width:34px; height:34px; text-align:center; font-size:16px; font-weight:700; }
-  .logic-grid { border-collapse:collapse; margin-top:6px; }
-  .logic-grid th, .logic-grid td { border:1px solid var(--line); padding:4px 8px; text-align:center; font-size:13px; }
-  .hint { color:var(--muted); font-size:12px; margin-bottom:0; }
-  svg { max-width:100%; height:auto; stroke:var(--accent); fill:none; stroke-width:2; }
-  @media (max-width: 720px) { .page { margin:0; min-height:auto; padding:18px; } .hero, .grid, .vocab-grid { grid-template-columns:1fr; } .passage { columns:1; } }
-  @media print {
-    body { background:#fff; font-size:12pt; }
-    .page { margin:0; border:0; min-height:297mm; padding:10mm; box-shadow:none; }
-    .card, .answer, .hero, .vocab-card { border-color:#999; }
-    svg { stroke:#333; }
-    .passage { columns:2; }
-    .question { page-break-inside:avoid; }
-    .write { background:repeating-linear-gradient(to bottom, transparent 0, transparent 25px, #aaa 26px); }
-  }
+${worksheetCss(palette, ageBand)}
 </style>
 </head>
 <body>
 <main class="page">
-  <section class="hero">
-    <div>
-      <p class="label">PaperStride mixed-skills workbook</p>
-      <h1>${themeTitle(theme)} Learning Mission</h1>
-      <p class="meta">Prepared for {{LEARNER_NICKNAME}} | ${grade} | Age ${input.age} | Interests: ${allInterests}</p>
-      <p>${escapeHtml(learnerFriendlyMissionCopy(input, blueprint))}</p>
-    </div>
-    <svg viewBox="0 0 120 90" role="img" aria-label="Low ink learning icon">
-      <rect x="18" y="16" width="70" height="48" rx="5"></rect>
-      <path d="M28 30h50M28 42h38M28 54h46"></path>
-      <circle cx="92" cy="24" r="10"></circle>
-      <path d="M88 67l12 10 6-24"></path>
-    </svg>
-  </section>
+  ${heroBandHtml(input, blueprint, rawTheme, ageBand, grade, allInterests)}
 
   ${sectionsHtml}
 
   ${funZone.html}
 
   <h2>Answer Sheet</h2>
-  <section class="grid">
+  <section class="answer-grid">
     ${answerCards}
     ${funZone.answersHtml}
   </section>
@@ -2190,7 +2128,7 @@ function assembleWorksheet(
   </article>
 </main>
 </body>
-</html>`;
+</html>`;;
 }
 
 // Grade-tiered fallback vocabulary used only when the AI vocab is missing or thin.
