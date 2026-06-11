@@ -452,11 +452,15 @@ async function createStagedWorksheetHtml(
   );
 
   if (sectionsToGenerate.length) {
-    const results = await Promise.allSettled(
-      sectionsToGenerate.map((section) =>
-        generateSectionWithExpert(input, blueprint, section, run, passageSummary)
-      )
-    );
+    const results: Array<{ status: "fulfilled"; value: any } | { status: "rejected"; reason: any }> = [];
+    for (const section of sectionsToGenerate) {
+      try {
+        const val = await generateSectionWithExpert(input, blueprint, section, run, passageSummary);
+        results.push({ status: "fulfilled", value: val });
+      } catch (err) {
+        results.push({ status: "rejected", reason: err });
+      }
+    }
 
     for (let i = 0; i < sectionsToGenerate.length; i++) {
       const result = results[i];
@@ -465,7 +469,7 @@ async function createStagedWorksheetHtml(
         content.sectionQuestions![section.subject] = result.value;
       } else {
         if (result.status === "rejected") {
-          console.warn(`Expert call for "${section.subject}" failed:`, result.reason);
+          console.warn(`Expert call for "${section.subject}" failed:`, (result as any).reason);
         }
       }
     }
