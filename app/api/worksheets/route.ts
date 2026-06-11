@@ -19,6 +19,12 @@ type WorksheetSection = {
   questionCount: number;
   skills: string[];
   focus: string;
+  // Expert-panel-assigned fields — drive the per-section AI call
+  expertPersona?: string;      // who writes this section (system prompt identity)
+  questionBriefs?: string[];   // one brief per question slot, e.g. "Q1 (recall): ask which..."
+  questionTypes?: string[];    // question formats for this section
+  engagementHook?: string;     // why this section excites this specific student
+  scaffoldingNote?: string;    // how to build confidence if isWeakArea
   isWeakArea?: boolean;
   interestConnection?: string;
 };
@@ -38,7 +44,11 @@ type LearningBlueprint = {
   answerExpectations: string;
   vocabularyPlan: string;
   testReadinessPlan: string;
-  // New fields
+  // Expert-panel-enriched fields
+  ageTrends?: string[];          // what's genuinely popular with this age right now
+  masterScenario?: string;       // 2-3 sentence world all sections live in
+  engagementStrategy?: string;   // motivational arc of the whole worksheet
+  motivationTactics?: string[];  // specific tactics for this age
   estimatedMinutes?: number;
   themeThread?: string;
   parentNote?: string;
@@ -398,9 +408,8 @@ async function createHtmlWorksheetWithOllama(
   }
 }
 
-// Phase 3: generate the worksheet in small, well-scoped pieces instead of one giant
-// call. Each piece is attempted independently and degrades to the deterministic bank on
-// failure, so a thin or rate-limited response only affects that one section.
+// Generate the worksheet in staged, parallel calls — passage first, then all
+// other sections concurrently with their dedicated expert persona and question briefs.
 async function createStagedWorksheetHtml(
   input: WorksheetInput,
   blueprint: LearningBlueprint,
@@ -408,61 +417,63 @@ async function createStagedWorksheetHtml(
 ): Promise<string> {
   const content: WorksheetContent = { sectionQuestions: {} };
 
-  const wantsReading = blueprint.sections.some((section) => section.subject === "Reading Comprehension");
-  const vocabSection = blueprint.sections.find((section) => section.subject === "Vocabulary in Context");
+  const wantsReading = blueprint.sections.some((s) => s.subject === "Reading Comprehension");
+  const vocabSection = blueprint.sections.find((s) => s.subject === "Vocabulary in Context");
 
-  // One call produces the reading passage, its questions, and vocabulary together so
-  // the passage and the questions about it always stay consistent.
+  // Step 1: Generate passage, vocab, and reading questions together so they are coherent.
+  let passageSummary: string | undefined;
   if (wantsReading || vocabSection) {
     try {
       const bundle = await generatePassageBundle(input, blueprint, run);
       content.passageHtml = bundle.passageHtml;
       content.vocab = bundle.vocab.length ? bundle.vocab : undefined;
       content.readingQuestions = bundle.readingQuestions.length ? bundle.readingQuestions : undefined;
+      // Extract plain-text summary for grounding other sections in the same story.
+      passageSummary = bundle.passageHtml
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .slice(0, 600)
+        .trim();
     } catch (error) {
       console.warn("Passage bundle failed; using bank passage and vocabulary", error);
     }
   }
 
-  // Keep the passage and its questions consistent: if the AI passage arrived without
-  // matching reading questions, drop it so the bank passage and bank questions pair up.
+  // If the passage arrived without matching reading questions, drop it so bank fills both.
   if (wantsReading && !content.readingQuestions) {
     content.passageHtml = undefined;
+    passageSummary = undefined;
   }
 
-  // Generate every non-reading section in ONE batched call on the fast model. Batching
-  // pays the shared context prefill once instead of N times (the redundant-prefill win),
-  // and avoids per-call scheduling overhead. Per-section resilience is preserved below:
-  // any subject the batch doesn't fill is retried individually, then bank-filled.
+  // Step 2: Generate all non-reading sections in parallel — each section gets its own
+  // expert call with the panel's persona, question briefs, and the passage for context.
   const sectionsToGenerate = blueprint.sections.filter(
-    (section) => !PASSAGE_BUNDLE_SUBJECTS.has(section.subject)
+    (s) => !PASSAGE_BUNDLE_SUBJECTS.has(s.subject)
   );
 
   if (sectionsToGenerate.length) {
-    try {
-      const batched = await generateAllSections(input, blueprint, sectionsToGenerate, run);
-      for (const section of sectionsToGenerate) {
-        const questions = batched[section.subject];
-        if (questions?.length) content.sectionQuestions![section.subject] = questions;
-      }
-    } catch (error) {
-      console.warn("Batched section generation failed; retrying per-section", error);
-    }
+    const results = await Promise.allSettled(
+      sectionsToGenerate.map((section) =>
+        generateSectionWithExpert(input, blueprint, section, run, passageSummary)
+      )
+    );
 
-    // Fill any section the batch missed, one at a time, before the deterministic bank.
-    for (const section of sectionsToGenerate) {
-      if (content.sectionQuestions![section.subject]?.length) continue;
-      try {
-        const questions = await generateSectionQuestions(input, blueprint, section, run);
-        if (questions.length) content.sectionQuestions![section.subject] = questions;
-      } catch (error) {
-        console.warn(`Section "${section.subject}" generation failed; using bank questions`, error);
+    for (let i = 0; i < sectionsToGenerate.length; i++) {
+      const result = results[i];
+      const section = sectionsToGenerate[i];
+      if (result.status === "fulfilled" && result.value.length) {
+        content.sectionQuestions![section.subject] = result.value;
+      } else {
+        if (result.status === "rejected") {
+          console.warn(`Expert call for "${section.subject}" failed:`, result.reason);
+        }
       }
     }
   }
 
   return assembleWorksheet(input, blueprint, content, run);
 }
+
 
 async function generatePassageBundle(
   input: WorksheetInput,
@@ -542,41 +553,58 @@ function passageBundlePrompt(
   readingCount: number,
   vocabCount: number
 ): string {
-  return `Write an ORIGINAL reading passage for this learner and the questions about it.
+  const readingSection = blueprint.sections.find((s) => s.subject === "Reading Comprehension");
+  const ageTrendsLine = blueprint.ageTrends?.length
+    ? `\nCurrent trends for this age: ${blueprint.ageTrends.join(", ")} — weave these in where authentic.`
+    : "";
+  const masterScenarioLine = blueprint.masterScenario
+    ? `\nMASTER SCENARIO (the passage must tell this story):\n${blueprint.masterScenario}\n`
+    : "";
+  const readingBriefsLine = readingSection?.questionBriefs?.length
+    ? `\nReading question briefs (write questions that precisely match these):\n${readingSection.questionBriefs.map((b, i) => `Q${i + 1}: ${b}`).join("\n")}`
+    : "";
 
+  return `Write an ORIGINAL reading passage for this learner and the comprehension questions about it.
+${masterScenarioLine}
 Learner:
-- Grade or level: ${input.grade}
-- Age: ${input.age}
-- Interest themes: ${input.interests}
-- Freshness key: ${run.seed.slice(0, 18)} (use only to vary the content; do not print it)
-- Fresh scenario lens: ${run.scenario}
-- Fresh reasoning angle: ${run.angle}
-- Concrete detail to include naturally: ${run.detail}
+- Grade: ${input.grade}, Age: ${input.age}
+- Interests: ${input.interests}${ageTrendsLine}
+- Challenge level: ${blueprint.challengeLevel}
+- Freshness seed: ${run.seed.slice(0, 18)} (vary the content; do not print it)
 
-Requirements:
-- The passage must be original, engaging, and tied to the interests, at least ${minReadingWords} words, at this exact reading level.
-- The setting, examples, people, and central problem must feel different on repeated generations for the same learner.
-- Do not reuse PaperStride's older fallback examples about coaches, vague technology feedback, moon rovers, or a generic research mission unless the learner explicitly asks for that exact topic.
-- Follow this blueprint exactly; it is the curriculum plan for the worksheet:
-  - Curriculum path: ${blueprint.curriculumPath}
-  - Grade expectations: ${blueprint.gradeExpectations}
-  - Motivation strategy: ${blueprint.motivationStrategy}
-  - Challenge level: ${blueprint.challengeLevel}
-  - Question formats: ${blueprint.questionFormats.join(", ")}
-  - Vocabulary plan: ${blueprint.vocabularyPlan}
-- Use the learner's interests as meaningful context, not just decoration. If there are multiple interests, weave at least two in naturally.
-- Keep tone age-appropriate: playful and concrete for elementary learners, more strategic for older learners.
-- Write ${readingCount} comprehension questions about the passage (main idea, evidence, vocabulary in context, inference as age allows). Where a multiple-choice question fits, give 3-4 options with exactly one correct option that appears in "choices"; otherwise use an empty "choices" array for a written response.
-- Pull ${vocabCount} useful words FROM the passage with a simple definition, an example sentence, and a memory hint.
-- Do not label the passage "Original passage:".
+Passage requirements:
+- The passage IS the master scenario above — it tells that story fully and vividly.
+- At least ${minReadingWords} words. ${Math.ceil(minReadingWords / 80)} or more substantial paragraphs.
+- Written at exactly ${input.grade} reading level — age-appropriate vocabulary, sentence complexity, and tone.
+- If there is no master scenario above, invent a vivid, specific scenario using the interests — not a generic "student explores topic" story.
+- Every person, place, and problem in the passage must feel real and specific, not educational or preachy.
+- Vocabulary words must come from the passage itself — words the student actually encounters in the text.
+
+Blueprint context:
+- Curriculum path: ${blueprint.curriculumPath}
+- Grade expectations: ${blueprint.gradeExpectations}
+- Motivation strategy: ${blueprint.motivationStrategy}
+- Vocabulary plan: ${blueprint.vocabularyPlan}
+${readingBriefsLine}
+
+Write EXACTLY ${readingCount} comprehension questions about this passage.
+- If the panel provided question briefs above, follow each one precisely.
+- Otherwise: vary question types — main idea, specific evidence, vocabulary in context, inference, author's purpose.
+- Multiple choice: 3-4 options, one unambiguously correct, correct answer MUST appear in "choices".
+- Open response: empty "choices" array.
+- Every question has a correct answer and a clear explanation referencing the passage.
+
+Pull EXACTLY ${vocabCount} vocabulary words FROM the passage — words the student encountered while reading.
+Each word needs: simple definition, example sentence (different from the passage), memory hint.
 
 Return JSON exactly:
 {
-  "passageParagraphs": ["paragraph 1", "paragraph 2"],
+  "passageParagraphs": ["paragraph 1 text", "paragraph 2 text"],
   "vocab": [ { "word": "", "definition": "", "example": "", "hint": "" } ],
-  "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]
+  "questions": [ { "prompt": "", "choices": ["", ""], "correctAnswer": "", "explanation": "" } ]
 }`;
 }
+
 
 function normalizePassageBundle(
   content: string,
@@ -611,133 +639,88 @@ function passageTokenBudgetFor(input: WorksheetInput, minReadingWords: number): 
   return Math.min(2600, Math.max(1400, Math.ceil(minReadingWords * 2.2) + questionBudget));
 }
 
-// Generate questions for ALL non-reading sections in a single call. Returns a map of
-// subject -> questions; subjects the model omits or botches simply don't appear, so the
-// caller can retry them individually or bank-fill.
-async function generateAllSections(
-  input: WorksheetInput,
-  blueprint: LearningBlueprint,
-  sections: WorksheetSection[],
-  run: WorksheetRun
-): Promise<Record<string, GeneratedQuestion[]>> {
-  const totalQuestions = sections.reduce((sum, s) => sum + s.questionCount, 0);
-  const hasMathOrLogic = sections.some((s) => /math|logic|pattern/i.test(s.subject));
-
-  const sectionSpecs = sections
-    .map((s, i) => {
-      const weak = s.isWeakArea
-        ? " — WEAK AREA: start with a confidence-builder and add a scaffolding hint to harder ones"
-        : "";
-      const conn = s.interestConnection ? ` Interest connection: ${s.interestConnection}.` : "";
-      return `${i + 1}. "${s.subject}" — write EXACTLY ${s.questionCount} question(s). Skills: ${s.skills.join(", ") || "core skills"}. Focus: ${s.focus}.${weak}${conn}`;
-    })
-    .join("\n");
-
-  const shape = sections
-    .map((s) => `  "${s.subject}": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ]`)
-    .join(",\n");
-
-  const content = await ollamaChat({
-    model: FAST_MODEL,
-    temperature: hasMathOrLogic ? 0.26 : 0.45,
-    maxTokens: Math.min(2400, 250 + totalQuestions * 130),
-    timeoutMs: LLM_TIMEOUT_MS,
-    responseFormat: "json_object",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You write rigorous, grade-appropriate practice questions across several worksheet sections at once, each with a correct answer and a short explanation. For any question involving numbers, solve it step by step and make sure the explanation's steps reach EXACTLY the stated correctAnswer — never contradict yourself. The correct option must be unambiguously correct and must appear in \"choices\". Return only valid JSON. Never include the learner's name or any private data."
-      },
-      {
-        role: "user",
-        content: `Learner: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
-${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold those areas gently.` : ""}
-Challenge level: ${blueprint.challengeLevel ?? "balanced"}
-${blueprint.gradeExpectations ? `Grade expectations: ${blueprint.gradeExpectations}` : ""}
-Theme thread: ${blueprint.themeThread ?? input.interests}
-Freshness key: ${run.seed.slice(0, 18)} (do not print it)
-Scenario lens: ${run.scenario}
-Reasoning angle: ${run.angle}
-
-Write questions for EACH section below. Weave the learner's specific interests into every
-scenario so questions feel personal and motivating — not generic. Within each section,
-make the first question accessible and the last the most challenging.
-Pitch the cognitive demand to match the challenge level above.
-Prefer multiple choice (3-4 options, exactly one correct answer in "choices");
-use an empty "choices" array for writing/explanation prompts.
-For numeric questions, double-check arithmetic so explanation matches the answer.
-Avoid generic questions; vary names, objects, numbers, settings each time.
-
-SECTIONS:
-${sectionSpecs}
-
-Return JSON exactly, with one key per section title:
-{
-${shape}
-}`
-      }
-    ]
-  });
-
-  const parsed = parseJsonContent(content) as Record<string, unknown>;
-  const out: Record<string, GeneratedQuestion[]> = {};
-  for (const section of sections) {
-    const questions = normalizeGeneratedQuestions(parsed[section.subject], section.questionCount);
-    if (questions.length) out[section.subject] = questions;
-  }
-  return out;
-}
-
-async function generateSectionQuestions(
+// Generate questions for one section using the expert panel's assigned persona and
+// question briefs. Each section gets its own dedicated call so the model can focus
+// fully — no rushing across multiple subjects at once.
+async function generateSectionWithExpert(
   input: WorksheetInput,
   blueprint: LearningBlueprint,
   section: WorksheetSection,
-  run: WorksheetRun
+  run: WorksheetRun,
+  passageSummary?: string
 ): Promise<GeneratedQuestion[]> {
-  const isMath = section.subject === "Math Reasoning" || /math|logic|pattern/i.test(section.subject);
+  const isMath = /math|logic|pattern|number|calculation|statistics|data/i.test(section.subject);
+  const isWriting = /writing|grammar|composition|language arts/i.test(section.subject);
+  const isScience = /science|investigation|experiment|biology|chemistry|physics|environment/i.test(section.subject);
+
+  // Build a system prompt from the expert persona the panel assigned, or synthesise
+  // a strong one based on the subject type if the panel didn't produce one.
+  const systemPrompt = section.expertPersona
+    ? `${section.expertPersona}
+
+You write one section of a worksheet. Every question must be grounded in the master scenario below. Return only valid JSON. Never include the learner's name or any private data.`
+    : isMath
+    ? `You are a master mathematics educator with deep knowledge of ${input.grade} curriculum. You create word problems that use real, interest-relevant numbers and scenarios. You are fanatical about arithmetic accuracy: you solve every problem yourself before writing the explanation, and your explanation's step-by-step working must arrive at EXACTLY the stated correctAnswer. Distractor choices are numbers a student would reach by making a common error (wrong operation, forgotten step, sign error) — never random numbers. Return only valid JSON.`
+    : isWriting
+    ? `You are an expert writing teacher who gives students real audiences and purposes. You never write "write about what you learned." Instead you assign specific creative and analytical tasks: fix this sentence, write a claim with evidence, revise this paragraph, write 3 sentences to explain X to Y. You know what grammar mistakes ${input.grade} students commonly make. Return only valid JSON.`
+    : isScience
+    ? `You are a science educator who frames every question as a step in an investigation: observation → question → prediction → evidence → conclusion. You never ask students to recall isolated facts — you always give them data or observations in the question stem and ask them to reason from it. Return only valid JSON.`
+    : `You are an expert ${section.subject} teacher for ${input.grade} students. You write clear, engaging questions grounded in the student's interests. Return only valid JSON.`;
+
+  // Build per-question instructions from the panel's briefs, or synthesise from skills.
+  const hasBriefs = section.questionBriefs && section.questionBriefs.length >= section.questionCount;
+  const questionInstructions = hasBriefs
+    ? section.questionBriefs!
+        .slice(0, section.questionCount)
+        .map((brief, i) => `Question ${i + 1}: ${brief}`)
+        .join("\n")
+    : `Write ${section.questionCount} questions that progress from accessible (Q1) to most challenging (Q${section.questionCount}). Skills: ${section.skills.join(", ")}.`;
+
+  const masterScenarioContext = blueprint.masterScenario
+    ? `MASTER SCENARIO (every question lives in this world):\n${blueprint.masterScenario}`
+    : `CONTEXT: The student's interests are ${input.interests}. Ground every question in this world specifically.`;
+
+  const passageContext = passageSummary
+    ? `\nPASSAGE SUMMARY (for questions that reference the passage):\n${passageSummary}`
+    : "";
+
   const content = await ollamaChat({
-    model: FAST_MODEL,   // llama3.2:3b — faster for focused structured calls
-    temperature: isMath ? 0.15 : 0.35,  // lower temp for math/logic → fewer arithmetic slips
-    maxTokens: 600,
+    model: QUALITY_MODEL,  // qwen2.5:7b — quality for everything
+    temperature: isMath ? 0.15 : 0.38,
+    maxTokens: Math.max(900, section.questionCount * 280),
+    timeoutMs: LLM_TIMEOUT_MS,
     responseFormat: "json_object",
     messages: [
-      {
-        role: "system",
-        content:
-          "You write rigorous, grade-appropriate practice questions for one subject, with a correct answer and explanation for each. For any question involving numbers, solve it yourself step by step and make sure the explanation's steps lead to EXACTLY the stated correctAnswer — never contradict yourself. The correct option must be unambiguously correct and must appear in \"choices\". Return only valid JSON. Never include the learner's name or any private data."
-      },
+      { role: "system", content: systemPrompt },
       {
         role: "user",
-        content: `Write practice questions for ONE worksheet section.
+        content: `${masterScenarioContext}${passageContext}
 
-Learner: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
-${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")} — scaffold questions in this section gently.` : ""}
+STUDENT: Grade ${input.grade}, Age ${input.age}, Interests: ${input.interests}
+${input.strugglingWith?.length ? `Struggling with: ${input.strugglingWith.join(", ")}` : ""}
 Challenge level: ${blueprint.challengeLevel ?? "balanced"}
-${blueprint.gradeExpectations ? `Grade expectations: ${blueprint.gradeExpectations}` : ""}
+${blueprint.gradeExpectations ? `Grade standard: ${blueprint.gradeExpectations}` : ""}
+${section.engagementHook ? `Engagement hook: ${section.engagementHook}` : ""}
+${section.isWeakArea && section.scaffoldingNote ? `Scaffolding note: ${section.scaffoldingNote}` : ""}
 
-Section: ${section.subject}
-Skills: ${section.skills.join(", ") || "core skills for this subject"}
+SECTION: ${section.subject}
 Focus: ${section.focus}
-${section.isWeakArea ? "⚑ WEAK AREA: start with one confidence-builder, then build up. Add scaffolding hints to harder questions." : ""}
-${section.interestConnection ? `Interest connection: ${section.interestConnection}` : ""}
-Theme thread: ${blueprint.themeThread ?? input.interests}
-Freshness key: ${run.seed.slice(0, 18)} (do not print it)
-Scenario lens: ${run.scenario}
-Reasoning angle: ${run.angle}
 
-Write EXACTLY ${section.questionCount} questions.
-- Ground EVERY question in the learner's specific interest — not a generic topic.
-- Pitch cognitive demand to match the challenge level above.
-- Q1 accessible (confidence-builder), final Q most challenging.
-- Prefer multiple choice (3-4 options, exactly one correct answer in "choices").
-- Open response for writing/explanation prompts — empty "choices" array.
-- Every question needs a correct answer and a short explanation.
-- Vary names, numbers, objects, settings each time.
-- For numeric questions: work the arithmetic carefully; explanation must reach exactly the correctAnswer.
+YOUR QUESTION BRIEFS (follow each one precisely):
+${questionInstructions}
+
+RULES FOR EVERY QUESTION:
+- Base every question in the master scenario world above — not a generic setting.
+- For multiple choice: 3-4 options, exactly one unambiguously correct, correct answer MUST appear in "choices".
+- For MCQ distractors: use answers a student reaches by making a real, common error — not random wrong answers.
+- For open response (writing, explanation): use empty "choices" array.
+- Every question needs a clear correct answer and a step-by-step explanation.
+${isMath ? "- MATH CRITICAL: Solve every arithmetic problem yourself before writing. Show the working in the explanation. The final number in the explanation MUST match correctAnswer exactly." : ""}
+${isWriting ? "- WRITING: Give every prompt a specific audience, purpose, and constraint. No generic prompts." : ""}
+- Freshness seed (vary your scenarios): ${run.seed.slice(0, 14)}
 
 Return JSON exactly:
-{ "questions": [ { "prompt": "", "choices": ["",""], "correctAnswer": "", "explanation": "" } ] }`
+{ "questions": [ { "prompt": "", "choices": ["", ""], "correctAnswer": "", "explanation": "" } ] }`
       }
     ]
   });
@@ -745,6 +728,18 @@ Return JSON exactly:
   const parsed = parseJsonContent(content) as Record<string, unknown>;
   return normalizeGeneratedQuestions(parsed.questions, section.questionCount);
 }
+
+// Legacy alias kept so call sites that reference generateSectionQuestions still compile.
+// New call path always goes through generateSectionWithExpert.
+async function generateSectionQuestions(
+  input: WorksheetInput,
+  blueprint: LearningBlueprint,
+  section: WorksheetSection,
+  run: WorksheetRun
+): Promise<GeneratedQuestion[]> {
+  return generateSectionWithExpert(input, blueprint, section, run);
+}
+
 
 function normalizeGeneratedQuestions(value: unknown, limit: number): GeneratedQuestion[] {
   if (!Array.isArray(value)) return [];
@@ -851,84 +846,124 @@ function cleanGeneratedParagraph(value: string): string {
 async function createLearningBlueprint(input: WorksheetInput): Promise<LearningBlueprint> {
   const bounds = questionCountBounds(input);
   const content = await groqChat({
-    temperature: 0.35,
-    maxTokens: 1300,
+    temperature: 0.4,
+    maxTokens: 3200,
     timeoutMs: LLM_BLUEPRINT_TIMEOUT_MS,
     responseFormat: "json_object",
     messages: [
       {
         role: "system",
-        content:
-          "You are a panel of expert educators: a veteran classroom teacher, a child development psychologist, a curriculum standards planner, and a test-readiness coach. Together you design the plan for ONE complete printable worksheet that represents a full, engaging day of practice for a specific learner. You decide everything: how many questions are developmentally right (enough to be substantial, never so many it overwhelms the child), which subjects to include, how many questions each subject gets, which skills each tests, and how hard it should be. Ground every choice in real pedagogy and the learner's age. Return only valid JSON. Never include the learner's name or any private data."
+        content: `You are a panel of five world-class education experts convened to design one perfect worksheet for a specific student. Each expert contributes their speciality:
+
+EXPERT 1 — CHILD DEVELOPMENT PSYCHOLOGIST
+You know exactly what engages learners at each developmental stage. You know attention spans, what creates flow vs frustration, how to sequence challenge and success so the student stays motivated start to finish. You push back if the worksheet is too long, too hard, or too generic.
+
+EXPERT 2 — CULTURAL TREND ANALYST  
+You track what children and teens are genuinely passionate about RIGHT NOW — specific games, YouTube channels, TV shows, sports figures, memes, music, social platforms, and topics that define their peer culture. You make content feel relevant by naming SPECIFIC things, not vague categories. You know that "kids like technology" is useless — but "Grade 5 students are currently obsessed with Minecraft Legends, MrBeast challenges, and Among Us" is actionable.
+
+EXPERT 3 — MASTER CLASSROOM TEACHER
+You know the exact skills this grade is building in school right now. You know the most common misconceptions students have at this age. You know which question types produce genuine learning vs mechanical completion. You design practice that connects directly to what they face in class tests.
+
+EXPERT 4 — CURRICULUM ARCHITECT
+You sequence subjects and questions within a single session to create a satisfying learning arc. You know when to put challenge before or after confidence-building. You know how many questions of each type a student can genuinely engage with before fatigue sets in. You design worksheets that feel complete and purposeful, not arbitrary.
+
+EXPERT 5 — MOTIVATION COACH
+You know the psychology of what makes students want to finish and come back. You use the student's own interests as genuine intellectual scaffolding — not superficial decoration. You design engagement hooks, challenge frames ("can you crack this?"), and emotional arcs that make learning feel like an adventure rather than a chore.
+
+The panel's job: design one perfect worksheet from scratch. Nothing is pre-assumed. You choose which subjects belong (or don't). You choose how many questions per section. You choose the question types. You create the scenario. You write question briefs. Every decision must be justified by genuine pedagogy for THIS specific student.
+
+Return only valid JSON. Never include the learner's name or any private data.`
       },
       {
         role: "user",
-        content: `Design the worksheet plan for this learner.
+        content: `Design a complete worksheet plan for this student.
 
-Learner details:
-- Grade or level: ${input.grade}
+STUDENT PROFILE:
+- Grade: ${input.grade}
 - Age: ${input.age}
-- Interest themes: ${input.interests}
+- Interests: ${input.interests}
+- Struggling with: ${input.strugglingWith?.length ? input.strugglingWith.join(", ") : "nothing specific"}
+- Goal today: ${input.goal || "general practice"}
+- Time available: ${input.timeAvailable || 30} minutes
+- Challenge preference: (the panel will decide based on grade and goal)
 
-Think like the expert panel. First decide the TOTAL number of questions that is right
-for a complete but age-appropriate day of practice at this exact age and grade
-(between ${bounds.min} and ${bounds.max}; younger and earlier grades
-toward the lower end, older grades toward the higher end). Then break that total into
-subject sections that together exercise the full range of skills this learner should
-practice. Choose the subjects yourself from this menu, using only those that fit the
-age and grade, and set each section's question count so the section counts sum to the
-total:
-${KNOWN_SUBJECTS.map((subject) => `  - ${subject}`).join("\n")}
+PANEL DISCUSSION — work through these before deciding the plan:
 
-Shape the plan as a DEEP CORE plus SHORT ENRICHMENT:
-- The CORE is Reading Comprehension, Grammar and Writing, and Math Reasoning. Give these
-  the most questions and real depth — this is where the learner does the substantial work,
-  matched to what they would face in school at this grade.
-- Add 1 to 3 SHORT ENRICHMENT sections (such as Science Investigation, Logic and Patterns,
-  Social Studies, or Critical Thinking) with just 1-2 questions each, to stretch thinking
-  in other directions without diluting the core.
-- Include Vocabulary in Context whenever there is a reading passage.
-Avoid spreading the questions thinly across many tiny sections; depth in the core beats
-breadth.
+Step 1 (Trend Analyst): What 3-5 things are genuinely popular with a ${input.age}-year-old in ${input.grade} RIGHT NOW? Be specific — name shows, games, creators, trends, not categories.
 
-Weave the interest themes (${input.interests}) into the framing to make the work
-exciting and personally motivating, while keeping the academic rigor real.
+Step 2 (Psychologist + Trend Analyst): Given their interests (${input.interests}) and the current trends you identified, what ONE vivid scenario would make this student forget they're doing schoolwork? Think: a real character facing a real problem in a world this student cares about. The scenario must use their specific interests authentically — not "a student who likes animals" but something more specific and exciting.
 
-Return JSON with this exact shape:
+Step 3 (Master Teacher + Curriculum Architect): Given ${input.grade} and struggling with "${input.strugglingWith?.join(", ") || "nothing specific"}", decide:
+  - Which subjects genuinely serve this student today? (Don't include a subject just because it's standard)
+  - How many questions per subject? (Based on developmental attention span and what each subject needs to be meaningful — not arbitrary round numbers)
+  - What question TYPES work best for each subject at this age? (Multiple choice, open-ended, fill-in, correct-the-mistake, show-your-working, rank-and-explain, yes/no-with-evidence, etc.)
+
+Step 4 (Motivation Coach): Write the engagement hook for each section — why will THIS student want to do THIS section specifically?
+
+Step 5 (Master Teacher): For each question slot in each section, write a specific brief: what cognitive operation does this question test (recall, application, inference, evaluation, creation), what should the stem reference from the master scenario, and what makes a correct vs incorrect answer clear.
+
+Return this JSON (the panel's complete decision):
 {
-  "curriculumPath": "short inferred curriculum direction for this learner",
-  "gradeExpectations": "what a learner at this age/grade should be practicing now",
-  "pageTarget": "recommended page target, such as 3-5 A4 pages",
-  "questionCount": 16,
+  "ageTrends": ["3-5 specific things popular with this exact age right now — names, not categories"],
+  
+  "masterScenario": "2-4 vivid sentences: a named character, a real problem they face, the specific setting, what is at stake. Must use the student's interests in a way that feels exciting, not educational. Every section of the worksheet takes place in this world.",
+  
+  "engagementStrategy": "1-2 sentences on the motivational arc: how does the worksheet open with confidence, build to challenge, and close with satisfaction?",
+  
+  "motivationTactics": ["3-5 specific psychological tactics for this age, e.g. 'open with a choice so they feel ownership', 'frame hard questions as expert-level challenges', 'use a running score or progress element'"],
+  
+  "curriculumPath": "brief curriculum direction for this student",
+  "gradeExpectations": "what a learner at this exact age/grade should be mastering",
+  "challengeLevel": "gentle | balanced | stretch | advanced — the panel's decision",
+  
   "sections": [
-    { "subject": "Reading Comprehension", "questionCount": 4, "skills": ["main idea", "evidence", "inference"], "focus": "one short sentence on what this section does and how it ties to the interests" }
+    {
+      "subject": "name this section — can be standard or creative based on what serves the student",
+      "questionCount": "number the panel decided, not a default",
+      "skills": ["specific skills practiced in this section"],
+      "focus": "one sentence: what this section does and why it belongs in THIS worksheet",
+      "expertPersona": "exactly who should write these questions — their subject specialty, their knowledge of this age group's errors, how they approach this question type, their tone. Be specific — 3-4 sentences. This becomes the AI's identity when writing the questions.",
+      "questionTypes": ["the question formats to use in this section"],
+      "engagementHook": "one sentence: why will THIS student specifically want to do this section?",
+      "questionBriefs": [
+        "Q1 (cognitive level — e.g. recall/application/inference): exactly what this question asks, what it references from the master scenario, what makes the correct answer distinguishable from wrong ones",
+        "Q2 (cognitive level): ...",
+        "...one brief per question slot"
+      ],
+      "isWeakArea": false,
+      "scaffoldingNote": "if isWeakArea: how to open with confidence before the harder questions"
+    }
   ],
-  "subjectMix": ["the subject names you chose"],
-  "cognitiveSkills": ["analytical thinking", "pattern recognition"],
-  "motivationStrategy": "how to make THIS learner excited, challenged, and confident using their interests",
-  "challengeLevel": "gentle | balanced | stretch | advanced",
-  "visualPlan": ["small SVG line-art", "puzzle grid"],
-  "questionFormats": ["mission cards", "evidence hunt"],
+  
+  "subjectMix": ["list of section subjects chosen"],
+  "cognitiveSkills": ["cognitive skills practiced across the whole worksheet"],
+  "motivationStrategy": "how to make THIS learner excited, challenged, and confident",
+  "visualPlan": ["what visual elements belong on this worksheet"],
+  "questionFormats": ["all question formats used across the worksheet"],
   "answerExpectations": "what the answer sheet must include for every question",
-  "vocabularyPlan": "how hard words, definitions, examples, and memory hints should work",
-  "testReadinessPlan": "age-appropriate future-test or SAT-style skill plan"
+  "vocabularyPlan": "how vocabulary is taught in context — not just definition lists",
+  "testReadinessPlan": "how this worksheet builds toward future tests",
+  "themeThread": "one sentence tying all sections together through the master scenario",
+  "parentNote": "what to watch for and how to encourage this specific student",
+  "estimatedMinutes": "the panel's estimate for this student"
 }
 
-Pedagogical principles to honor:
-- Developmental fit first: match attention span, reading load, and abstraction to the age.
-- Pre-K/K: short, playful, concrete, picture-supported; few subjects, more visuals.
-- Grades 1-5: build reading, vocabulary, number sense, writing mechanics, science curiosity, and logic with growing independence.
-- Grades 6-8: add multi-step reasoning, evidence, quantitative reasoning, and clear written explanation across more subjects.
-- Grades 9-12: include SAT-style reading evidence, vocabulary in context, algebraic and data reasoning, argument writing, and trap-answer elimination.
-- "questionCount" MUST equal the sum of the section "questionCount" values.
-- Every section must list the specific skills it tests.
-- Do not include the learner nickname or any private data.`
+Pedagogical rules the panel must follow:
+- "questionCount" in the JSON root MUST equal the sum of all section "questionCount" values.
+- Pre-K/K: max 8 questions total, concrete, playful, very short text.
+- Grades 1-3: max ${bounds.max} questions, one reading passage, short activities.
+- Grades 4-6: ${bounds.min}-${bounds.max} questions, real depth in reading and math.
+- Grades 7-8: multi-step reasoning, evidence, written explanation.
+- Grades 9-12: SAT-style evidence, quantitative reasoning, argument writing.
+- Every section must have exactly as many questionBriefs as its questionCount.
+- Never include private data. Never pad. Every question must earn its place.`
       }
     ]
   });
 
   return normalizeBlueprint(parseJsonContent(content), input);
 }
+
 
 // ollamaChat — single call to the local Ollama server via the native /api/chat API.
 // keep_alive/num_thread/num_ctx are set on every request so the performance tuning
@@ -1055,7 +1090,23 @@ function normalizeBlueprint(value: unknown, input: WorksheetInput, honorUserPlan
       ? cleanText(String(candidate.themeThread), 200)
       : undefined,
     parentNote: candidate.parentNote
-      ? cleanText(String(candidate.parentNote), 400)
+      ? cleanText(String(candidate.parentNote), 600)
+      : undefined,
+    // Expert-panel-enriched fields — pass through to content generation
+    ageTrends: Array.isArray(candidate.ageTrends)
+      ? normalizeStringList(candidate.ageTrends, [], 8)
+      : undefined,
+    masterScenario: candidate.masterScenario
+      ? cleanText(String(candidate.masterScenario), 800)
+      : undefined,
+    engagementStrategy: candidate.engagementStrategy
+      ? cleanText(String(candidate.engagementStrategy), 400)
+      : undefined,
+    motivationTactics: Array.isArray(candidate.motivationTactics)
+      ? normalizeStringList(candidate.motivationTactics, [], 8)
+      : undefined,
+    estimatedMinutes: typeof candidate.estimatedMinutes === "number"
+      ? Math.min(180, Math.max(5, candidate.estimatedMinutes))
       : undefined,
   };
 }
@@ -1441,7 +1492,20 @@ function normalizeSections(
     if (existing) {
       existing.questionCount = Math.min(12, existing.questionCount + clamped);
     } else {
-      bySubject.set(subject, { subject, questionCount: clamped, skills, focus });
+      bySubject.set(subject, {
+        subject,
+        questionCount: clamped,
+        skills,
+        focus,
+        // Pass expert-panel fields through so content generation can use them
+        expertPersona: cleanText(String((candidate as WorksheetSection).expertPersona || ""), 800) || undefined,
+        questionBriefs: normalizeStringList((candidate as WorksheetSection).questionBriefs, [], 20),
+        questionTypes: normalizeStringList((candidate as WorksheetSection).questionTypes, [], 10),
+        engagementHook: cleanText(String((candidate as WorksheetSection).engagementHook || ""), 300) || undefined,
+        scaffoldingNote: cleanText(String((candidate as WorksheetSection).scaffoldingNote || ""), 300) || undefined,
+        isWeakArea: Boolean((candidate as WorksheetSection).isWeakArea),
+        interestConnection: cleanText(String((candidate as WorksheetSection).interestConnection || ""), 200) || undefined,
+      });
     }
   }
 
